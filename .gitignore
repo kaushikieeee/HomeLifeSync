@@ -1,0 +1,30 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Next.js
+.next
+out
+
+# Production
+build
+
+# Misc
+.DS_Store
+*.log
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Android
+android/app/build
+android/.gradle
+android/local.properties
+android/.idea
+android/app/app.iml
+android/HomeLifeSync-Tablet.iml
+
+# Capacitor
+capacitor.config.json.timestamp

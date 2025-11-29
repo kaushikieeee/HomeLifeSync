@@ -45,6 +45,16 @@ declare global {
         error: (err: any) => void
       ) => void;
     };
+    SMSReceive?: {
+      startWatch: (
+        success: () => void,
+        error: (err: any) => void
+      ) => void;
+      stopWatch: (
+        success: () => void,
+        error: (err: any) => void
+      ) => void;
+    };
     Fingerprint?: {
       isAvailable: (
         success: (result: "OK" | "finger" | "face" | "biometric") => void,
@@ -138,6 +148,7 @@ export function CaretakerDashboard() {
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrolled, setScrolled] = useState(false);
+  const [elderBattery, setElderBattery] = useState<string | null>(null);
 
   // Handle scroll for header blur effect
   useEffect(() => {
@@ -159,6 +170,37 @@ export function CaretakerDashboard() {
     } else {
       localStorage.setItem('target_phone_number', '9597140692');
     }
+  }, []);
+
+  // SMS Listener for Battery Status
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.SMSReceive) {
+      window.SMSReceive.startWatch(
+        () => {
+          console.log('SMS Watch started');
+          document.addEventListener('onSMSArrive', (e: any) => {
+            const sms = e.data;
+            console.log('SMS Arrived:', sms);
+            // Check for battery format: "BATTERY: 85%" or similar
+            if (sms.body && sms.body.includes('BATTERY:')) {
+               const parts = sms.body.split('BATTERY:');
+               if (parts.length > 1) {
+                 const level = parts[1].trim();
+                 setElderBattery(level);
+                 toast.success(`Elder Battery Updated: ${level}`);
+               }
+            }
+          });
+        },
+        (err) => console.error('Error starting SMS watch', err)
+      );
+    }
+    
+    return () => {
+      if (typeof window !== 'undefined' && window.SMSReceive) {
+        window.SMSReceive.stopWatch(() => {}, () => {});
+      }
+    };
   }, []);
 
   const savePhoneNumber = (phone: string) => {
@@ -311,13 +353,25 @@ export function CaretakerDashboard() {
       {/* iOS Header - Sticky & Glassmorphic */}
       <div className="sticky top-0 z-50 pt-safe bg-background/70 backdrop-blur-2xl border-b border-border supports-[backdrop-filter]:bg-background/60 transition-all duration-200">
         <div className="px-4 pb-2 flex items-center justify-between pt-2">
-          <motion.h1 
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="text-[34px] font-bold tracking-tight text-foreground"
-          >
-            HomeSync<span className="text-[#FFCC00]">.</span>
-          </motion.h1>
+          <div className="flex flex-col">
+            <motion.h1 
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="text-[34px] font-bold tracking-tight text-foreground"
+            >
+              HomeSync<span className="text-[#FFCC00]">.</span>
+            </motion.h1>
+            {elderBattery && (
+               <motion.div 
+                 initial={{ opacity: 0, y: -10 }} 
+                 animate={{ opacity: 1, y: 0 }}
+                 className="flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-100/80 px-2.5 py-1 rounded-full w-fit mt-0.5 backdrop-blur-sm border border-green-200"
+               >
+                 <Battery className="w-3.5 h-3.5 fill-current" />
+                 <span>Elder: {elderBattery}</span>
+               </motion.div>
+            )}
+          </div>
           
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

@@ -54,6 +54,7 @@
     "clsx": "^2.1.1",
     "cmdk": "1.0.4",
     "cordova-plugin-fingerprint-aio": "^6.0.1",
+    "cordova-plugin-sms-receiver": "^0.1.6",
     "cordova-sms-plugin": "^1.0.4",
     "date-fns": "4.1.0",
     "embla-carousel-react": "8.5.1",

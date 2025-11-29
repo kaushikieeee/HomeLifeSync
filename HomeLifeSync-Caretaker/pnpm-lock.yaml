@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@capacitor/android':
-        specifier: ^7.4.4aa
+        specifier: ^7.4.4
         version: 7.4.4(@capacitor/core@7.4.4)
       '@capacitor/app':
         specifier: ^7.1.0
@@ -134,6 +134,9 @@ importers:
       cordova-plugin-fingerprint-aio:
         specifier: ^6.0.1
         version: 6.0.1
+      cordova-plugin-sms-receiver:
+        specifier: ^0.1.6
+        version: 0.1.6
       cordova-sms-plugin:
         specifier: ^1.0.4
         version: 1.0.4
@@ -1487,6 +1490,9 @@ packages:
   cordova-plugin-fingerprint-aio@6.0.1:
     resolution: {integrity: sha512-xyRGPv4mIn1fjuTgKMKg0ndV/yx3HPlBSkD03vREX14uS98ucbvxB8ALUyCjya7J6nDHCjBxVRlhTj6ML4XdYg==}
     engines: {cordovaDependencies: {'>=3.0.0': {cordova-android: '>=8.0.0'}}}
+
+  cordova-plugin-sms-receiver@0.1.6:
+    resolution: {integrity: sha512-gaoMgeMpzzR0TQ9nk4+S4k/DNjO17KW3CHwUQPn3qsYPLNzNsQJ8u1YqlQTysO+sZjza55nHF4U+HppV0Nyvrg==}
 
   cordova-sms-plugin@1.0.4:
     resolution: {integrity: sha512-O+8sBBtTIel99+T+gbZCsw6svLk6D2PP6aEedOpQLSBbeyW0ZY+bTt9s6a5CZubSdeuFP0Lh2nXph5+4/v/m4A==}
@@ -3694,6 +3700,8 @@ snapshots:
   commander@12.1.0: {}
 
   cordova-plugin-fingerprint-aio@6.0.1: {}
+
+  cordova-plugin-sms-receiver@0.1.6: {}
 
   cordova-sms-plugin@1.0.4: {}
 

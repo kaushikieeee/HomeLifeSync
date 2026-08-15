@@ -151,16 +151,4 @@
     overscroll-behavior: none;
     touch-action: pan-y;
   }
-  
-  /* Optimize animations for mobile */
-  * {
-    will-change: auto;
-  }
-  
-  [class*="transition"],
-  [class*="animate"] {
-    transform: translateZ(0);
-    backface-visibility: hidden;
-    perspective: 1000px;
-  }
 }

@@ -1,479 +1,493 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { 
-  Battery, Wifi, Signal, MapPin, Heart, Shield, 
-  Bell, Zap, Lock, Unlock, Home, Thermometer, 
-  Activity, Moon, Sun, Smartphone, Camera, 
-  MessageSquare, Clock, AlertTriangle, CheckCircle,
-  Droplets, Wind, Volume2, VolumeX, Power
+import {
+  Battery, Wifi, MapPin, Heart, Shield, Clock, Lock, Unlock, Zap,
+  Thermometer, Moon, Sun, Smartphone, CheckCircle2, Wind,
+  Volume2, VolumeX, Power, Tv, ArrowRight, Bell, Activity, RefreshCcw,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import { NORMAL_VITALS, Vitals } from "@/lib/health";
+import { useFirebaseDevice } from "@/hooks/use-firebase-device";
+import { useElderAlerts } from "@/hooks/use-elder-alerts";
+import { firebaseConfigured } from "@/lib/firebase";
+import { isCriticalHeart } from "@/lib/commands";
 
-// Types for our dashboard state
-interface DashboardState {
-  location: { address: string; isMoving: boolean; lastUpdate: Date };
-  health: { heartRate: number; trend: 'up' | 'down' | 'stable'; lastUpdate: Date };
-  safety: { sosActive: boolean; fallDetected: boolean; lastCheck: Date };
-  device: { 
-    battery: number; 
-    isCharging: boolean; 
-    wifi: boolean; 
-    mobileData: boolean; 
-    signalStrength: number;
-    ringer: 'normal' | 'silent' | 'vibrate';
-    torch: boolean;
-  };
-  home: {
-    doorLocked: boolean;
-    livingLight: boolean;
-    bedLight: boolean;
-    fan: boolean;
-    temperature: number;
-  };
-  lastMessage: { text: string; time: Date } | null;
+// ── Runtime state (mock; a live Firebase feed can drive the same cards) ──
+
+interface RuntimeState {
+  sos: boolean;
+  fall: boolean;
+  doorLocked: boolean;
+  livingLight: boolean;
+  bedLight: boolean;
+  fan: boolean;
+  roomTemp: number;
+  moving: boolean;
+  battery: number;
+  charging: boolean;
+  wifi: boolean;
+  torch: boolean;
+  silent: boolean;
+  condition: string;
+  lastEvent: { message: string; time: Date } | null;
 }
 
-const INITIAL_STATE: DashboardState = {
-  location: { address: "Home - 123 Main St", isMoving: false, lastUpdate: new Date() },
-  health: { heartRate: 72, trend: 'stable', lastUpdate: new Date() },
-  safety: { sosActive: false, fallDetected: false, lastCheck: new Date() },
-  device: { 
-    battery: 85, 
-    isCharging: false, 
-    wifi: true, 
-    mobileData: true, 
-    signalStrength: 4,
-    ringer: 'normal',
-    torch: false
-  },
-  home: {
-    doorLocked: true,
-    livingLight: false,
-    bedLight: false,
-    fan: false,
-    temperature: 24
-  },
-  lastMessage: null
+const INITIAL: RuntimeState = {
+  sos: false, fall: false, doorLocked: true, livingLight: false,
+  bedLight: false, fan: false, roomTemp: 24, moving: false, battery: 85,
+  charging: false, wifi: true, torch: false, silent: false, condition: "",
+  lastEvent: null,
 };
 
-export function TabletDashboard() {
-  const [state, setState] = useState<DashboardState>(INITIAL_STATE);
-  const [logs, setLogs] = useState<{time: Date, message: string, type: 'info' | 'alert' | 'success'}[]>([]);
+function rnd(spread: number) { return (Math.random() - 0.5) * 2 * spread; }
+function clamp(v: number, lo: number, hi: number) { return Math.round(Math.min(hi, Math.max(lo, v)) * 10) / 10; }
 
-  // Function to process incoming commands/status text
-  const processIncomingText = (text: string) => {
-    const cmd = text.toUpperCase().trim();
-    const now = new Date();
-    let logType: 'info' | 'alert' | 'success' = 'info';
-    let logMsg = `Received: ${text}`;
+type Setup = { room: string; deviceId: string };
+const SETUP_KEY = "tablet_setup";
 
-    setState(prev => {
-      const newState = { ...prev };
-      newState.lastMessage = { text, time: now };
+// ── Setup wizard (first run / reconfigure) ────────────────────────────
 
-      // --- Safety & Alerts ---
-      if (cmd.includes("SOS") || cmd.includes("HELP")) {
-        newState.safety.sosActive = true;
-        logType = 'alert';
-        logMsg = "SOS ALERT ACTIVATED";
-      }
-      if (cmd.includes("SAFE") || cmd.includes("SOSACK")) {
-        newState.safety.sosActive = false;
-        logType = 'success';
-        logMsg = "SOS Cleared";
-      }
-      if (cmd.includes("FALL")) {
-        newState.safety.fallDetected = true;
-        logType = 'alert';
-        logMsg = "FALL DETECTED";
-      }
-
-      // --- Home Automation ---
-      if (cmd.includes("LOCKED") || cmd.includes("LOCKDOOR")) {
-        newState.home.doorLocked = true;
-        logType = 'success';
-        logMsg = "Door Locked";
-      }
-      if (cmd.includes("UNLOCKED") || cmd.includes("UNLOCKDOOR")) {
-        newState.home.doorLocked = false;
-        logType = 'alert'; // Alert because unlocked might be unsafe
-        logMsg = "Door Unlocked";
-      }
-      if (cmd.includes("LIVINGLIGHTON")) newState.home.livingLight = true;
-      if (cmd.includes("LIVINGLIGHTOFF")) newState.home.livingLight = false;
-      if (cmd.includes("BEDLIGHTON")) newState.home.bedLight = true;
-      if (cmd.includes("BEDLIGHTOFF")) newState.home.bedLight = false;
-      if (cmd.includes("FANON")) newState.home.fan = true;
-      if (cmd.includes("FANOFF")) newState.home.fan = false;
-
-      // --- Device Status ---
-      if (cmd.includes("BATLOW")) {
-        newState.device.battery = 15;
-        logType = 'alert';
-        logMsg = "Battery Low Alert";
-      }
-      if (cmd.includes("CHARGING") || cmd.includes("CHARGESTATE")) newState.device.isCharging = true;
-      if (cmd.includes("NOTCHARGING")) newState.device.isCharging = false;
-      if (cmd.includes("WIFIUP")) newState.device.wifi = true;
-      if (cmd.includes("WIFIDOWN")) newState.device.wifi = false;
-      if (cmd.includes("TORCHON")) newState.device.torch = true;
-      if (cmd.includes("TORCHOFF")) newState.device.torch = false;
-      if (cmd.includes("SILENT")) newState.device.ringer = 'silent';
-      if (cmd.includes("RING") || cmd.includes("UNMUTE")) newState.device.ringer = 'normal';
-
-      // --- Movement ---
-      if (cmd.includes("MOVING") || cmd.includes("MOVESTATE")) newState.location.isMoving = true;
-      if (cmd.includes("STATIONARY")) newState.location.isMoving = false;
-
-      return newState;
-    });
-
-    // Add to log
-    setLogs(prev => [{ time: now, message: logMsg, type: logType }, ...prev].slice(0, 50));
-    
-    // Show toast
-    if (logType === 'alert') toast.error(logMsg);
-    else if (logType === 'success') toast.success(logMsg);
-    else toast.info(logMsg);
-  };
-
-  // Simulate SMS listener (In a real app, use cordova-plugin-sms-receiver)
-  useEffect(() => {
-    // Mock listener for browser testing
-    const handleMockSMS = (e: CustomEvent) => {
-      processIncomingText(e.detail.message);
-    };
-    
-    window.addEventListener('mock-sms', handleMockSMS as EventListener);
-    
-    // Real SMS Plugin Listener (Commented out but ready)
-    /*
-    const onSMSArrive = (e: any) => {
-      const sms = e.data;
-      processIncomingText(sms.body);
-    };
-    document.addEventListener('onSMSArrive', onSMSArrive);
-    */
-
-    return () => {
-      window.removeEventListener('mock-sms', handleMockSMS as EventListener);
-      // document.removeEventListener('onSMSArrive', onSMSArrive);
-    };
-  }, []);
+function SetupWizard({ initial, onSave, onCancel }: {
+  initial: Setup | null;
+  onSave: (s: Setup) => void;
+  onCancel?: () => void;
+}) {
+  const [room, setRoom] = useState(initial?.room ?? "");
+  const [deviceId, setDeviceId] = useState(initial?.deviceId ?? "");
+  const ready = room.trim().length > 0 && deviceId.trim().length >= 4;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50 p-6 font-sans">
-      {/* Header Status Bar */}
-      <header className="flex items-center justify-between mb-8 bg-slate-900/50 p-4 rounded-2xl border border-slate-800 backdrop-blur-xl">
-        <div className="flex items-center gap-4">
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-teal-400 bg-clip-text text-transparent">
-            HomeSync<span className="text-yellow-400">.</span> Dashboard
+    <div className="h-screen bg-background flex items-center justify-center p-6 font-sans">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <h1 className="text-[32px] font-bold tracking-tight text-foreground">
+            <span className="text-[#FF9933]">Home</span>Sync
+            <span className="text-[#138808]">.</span>
           </h1>
-          <Badge variant={state.device.wifi ? "default" : "destructive"} className="h-6">
-            {state.device.wifi ? "Online" : "Offline"}
-          </Badge>
-        </div>
-        
-        <div className="flex items-center gap-6 text-slate-400">
-          <div className="flex items-center gap-2">
-            <Signal className="w-5 h-5" />
-            <span>5G</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Wifi className={`w-5 h-5 ${state.device.wifi ? 'text-blue-400' : 'text-slate-600'}`} />
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Battery className={`w-6 h-6 ${state.device.battery < 20 ? 'text-red-500' : 'text-green-400'}`} />
-              {state.device.isCharging && (
-                <Zap className="w-3 h-3 text-yellow-400 absolute -top-1 -right-1 fill-current" />
-              )}
-            </div>
-            <span className="font-mono">{state.device.battery}%</span>
-          </div>
-          <div className="text-xl font-mono border-l border-slate-700 pl-6">
-            {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </div>
-        </div>
-      </header>
-
-      <div className="grid grid-cols-12 gap-6 h-[calc(100vh-140px)]">
-        {/* Left Column - Critical Status (4 cols) */}
-        <div className="col-span-4 space-y-6 flex flex-col">
-          {/* SOS / Safety Card */}
-          <Card className={`border-0 shadow-lg transition-all duration-500 ${state.safety.sosActive ? 'bg-red-500/20 animate-pulse ring-2 ring-red-500' : 'bg-slate-900/50'}`}>
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-lg font-medium text-slate-300">
-                <Shield className="w-5 h-5" /> Safety Status
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className={`text-4xl font-bold ${state.safety.sosActive ? 'text-red-500' : 'text-emerald-400'}`}>
-                  {state.safety.sosActive ? "SOS ACTIVE" : "SECURE"}
-                </span>
-                {state.safety.sosActive ? (
-                  <AlertTriangle className="w-12 h-12 text-red-500 animate-bounce" />
-                ) : (
-                  <CheckCircle className="w-12 h-12 text-emerald-500/50" />
-                )}
-              </div>
-              {state.safety.fallDetected && (
-                <div className="mt-4 bg-red-500/20 p-3 rounded-lg flex items-center gap-3 text-red-200">
-                  <Activity className="w-5 h-5" />
-                  <span className="font-bold">FALL DETECTED</span>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Door / Lock Status */}
-          <Card className="bg-slate-900/50 border-slate-800">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-lg font-medium text-slate-300">
-                <Home className="w-5 h-5" /> Home Security
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm text-slate-400 mb-1">Main Door</div>
-                  <div className={`text-2xl font-bold ${state.home.doorLocked ? 'text-blue-400' : 'text-orange-400'}`}>
-                    {state.home.doorLocked ? "LOCKED" : "UNLOCKED"}
-                  </div>
-                </div>
-                <div className={`p-4 rounded-full ${state.home.doorLocked ? 'bg-blue-500/20 text-blue-400' : 'bg-orange-500/20 text-orange-400'}`}>
-                  {state.home.doorLocked ? <Lock className="w-8 h-8" /> : <Unlock className="w-8 h-8" />}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Location Map Placeholder */}
-          <Card className="bg-slate-900/50 border-slate-800 flex-1">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-lg font-medium text-slate-300">
-                <MapPin className="w-5 h-5" /> Location
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="aspect-video bg-slate-800 rounded-xl flex items-center justify-center relative overflow-hidden group">
-                <div className="absolute inset-0 bg-[url('https://api.mapbox.com/styles/v1/mapbox/dark-v10/static/0,0,10,0/600x400?access_token=YOUR_TOKEN')] bg-cover opacity-50" />
-                <MapPin className="w-8 h-8 text-blue-500 z-10 drop-shadow-lg animate-bounce" />
-                <div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-xs text-white">
-                  Live
-                </div>
-              </div>
-              <div>
-                <div className="text-lg font-medium text-white">{state.location.address}</div>
-                <div className="flex items-center gap-2 mt-2">
-                  <Badge variant="outline" className={`${state.location.isMoving ? 'bg-blue-500/20 text-blue-300 border-blue-500/50' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
-                    {state.location.isMoving ? "Moving" : "Stationary"}
-                  </Badge>
-                  <span className="text-xs text-slate-500">Updated: {state.location.lastUpdate.toLocaleTimeString()}</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <p className="text-muted-foreground mt-1 text-sm">Home display · setup</p>
         </div>
 
-        {/* Middle Column - Environment & Health (4 cols) */}
-        <div className="col-span-4 space-y-6">
-          {/* Health Stats */}
-          <Card className="bg-slate-900/50 border-slate-800">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-lg font-medium text-slate-300">
-                <Heart className="w-5 h-5" /> Vitals
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-slate-800/50 p-4 rounded-xl">
-                  <div className="text-sm text-slate-400 mb-1">Heart Rate</div>
-                  <div className="flex items-end gap-2">
-                    <span className="text-3xl font-bold text-rose-400">{state.health.heartRate}</span>
-                    <span className="text-sm text-rose-400/70 mb-1">BPM</span>
-                  </div>
-                  <div className="mt-2 h-1 bg-slate-700 rounded-full overflow-hidden">
-                    <div className="h-full bg-rose-500 w-[60%]" />
-                  </div>
-                </div>
-                <div className="bg-slate-800/50 p-4 rounded-xl">
-                  <div className="text-sm text-slate-400 mb-1">Status</div>
-                  <div className="text-xl font-medium text-emerald-400">Normal</div>
-                  <div className="text-xs text-slate-500 mt-2">Trend: Stable</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        <div className="bg-card p-6 rounded-[24px] shadow-sm border border-border">
+          <Tv className="w-10 h-10 text-primary mx-auto mb-4" />
+          <h2 className="text-lg font-bold tracking-tight text-center mb-1">Where is this screen?</h2>
+          <p className="text-muted-foreground text-sm text-center mb-5 leading-relaxed">
+            Name this display (e.g. “Kitchen TV”) and enter your loved one's Device
+            ID to watch their status from any room.
+          </p>
 
-          {/* Home Automation Grid */}
-          <Card className="bg-slate-900/50 border-slate-800 flex-1">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-lg font-medium text-slate-300">
-                <Zap className="w-5 h-5" /> Smart Home
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-3">
-                <StatusTile 
-                  icon={<Sun className="w-6 h-6" />} 
-                  label="Living Room" 
-                  active={state.home.livingLight} 
-                  color="text-yellow-400"
-                />
-                <StatusTile 
-                  icon={<Moon className="w-6 h-6" />} 
-                  label="Bedroom" 
-                  active={state.home.bedLight} 
-                  color="text-purple-400"
-                />
-                <StatusTile 
-                  icon={<Wind className="w-6 h-6" />} 
-                  label="Fan" 
-                  active={state.home.fan} 
-                  color="text-cyan-400"
-                />
-                <StatusTile 
-                  icon={<Thermometer className="w-6 h-6" />} 
-                  label={`${state.home.temperature}°C`} 
-                  active={true} 
-                  color="text-orange-400"
-                  subLabel="Indoor"
-                />
-              </div>
-            </CardContent>
-          </Card>
+          <label className="text-[12px] text-muted-foreground mb-1 block">Display name</label>
+          <Input
+            value={room}
+            onChange={e => setRoom(e.target.value)}
+            placeholder="e.g. Kitchen display"
+            className="h-12 rounded-xl mb-4"
+          />
 
-          {/* Device Controls Status */}
-          <Card className="bg-slate-900/50 border-slate-800">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-lg font-medium text-slate-300">
-                <Smartphone className="w-5 h-5" /> Device State
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex justify-between gap-2">
-                <div className={`flex flex-col items-center gap-2 p-3 rounded-xl w-full ${state.device.torch ? 'bg-yellow-500/20 text-yellow-400' : 'bg-slate-800/50 text-slate-500'}`}>
-                  <Zap className="w-5 h-5" />
-                  <span className="text-xs font-medium">Torch</span>
-                </div>
-                <div className={`flex flex-col items-center gap-2 p-3 rounded-xl w-full ${state.device.ringer === 'silent' ? 'bg-red-500/20 text-red-400' : 'bg-slate-800/50 text-slate-500'}`}>
-                  {state.device.ringer === 'silent' ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-                  <span className="text-xs font-medium">{state.device.ringer === 'silent' ? 'Silent' : 'Ring'}</span>
-                </div>
-                <div className={`flex flex-col items-center gap-2 p-3 rounded-xl w-full ${state.device.isCharging ? 'bg-green-500/20 text-green-400' : 'bg-slate-800/50 text-slate-500'}`}>
-                  <Power className="w-5 h-5" />
-                  <span className="text-xs font-medium">{state.device.isCharging ? 'Charging' : 'Battery'}</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+          <label className="text-[12px] text-muted-foreground mb-1 block">Elder device ID</label>
+          <Input
+            value={deviceId}
+            onChange={e => setDeviceId(e.target.value)}
+            placeholder="e.g. a1b2c3d4"
+            className="h-12 rounded-xl text-center font-mono tracking-widest"
+          />
 
-        {/* Right Column - Logs & Debug (4 cols) */}
-        <div className="col-span-4 flex flex-col gap-6">
-          {/* Activity Log */}
-          <Card className="bg-slate-900/50 border-slate-800 flex-1 flex flex-col overflow-hidden">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-lg font-medium text-slate-300">
-                <Clock className="w-5 h-5" /> Activity Log
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex-1 overflow-hidden p-0">
-              <ScrollArea className="h-full px-6 pb-4">
-                <div className="space-y-4 pt-2">
-                  <AnimatePresence initial={false}>
-                    {logs.map((log, i) => (
-                      <motion.div
-                        key={i}
-                        initial={{ opacity: 0, x: 20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        className={`flex gap-3 pb-3 border-b border-slate-800/50 last:border-0`}
-                      >
-                        <div className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
-                          log.type === 'alert' ? 'bg-red-500' : 
-                          log.type === 'success' ? 'bg-green-500' : 'bg-blue-500'
-                        }`} />
-                        <div>
-                          <div className="text-sm font-medium text-slate-200">{log.message}</div>
-                          <div className="text-xs text-slate-500">{log.time.toLocaleTimeString()}</div>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </ScrollArea>
-            </CardContent>
-          </Card>
+          <Button onClick={() => onSave({ room: room.trim(), deviceId: deviceId.trim() })}
+            disabled={!ready}
+            className="w-full h-12 rounded-xl bg-primary text-lg font-semibold mt-5">
+            Start dashboard <ArrowRight className="w-4 h-4" />
+          </Button>
 
-          {/* Debug / Simulation Input */}
-          <Card className="bg-slate-800/30 border-slate-800 border-dashed">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-slate-400 uppercase tracking-wider">
-                Simulation Console
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form 
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const input = (e.target as any).cmd.value;
-                  if(input) {
-                    window.dispatchEvent(new CustomEvent('mock-sms', { detail: { message: input } }));
-                    (e.target as any).cmd.value = "";
-                  }
-                }}
-                className="flex gap-2"
-              >
-                <input 
-                  name="cmd"
-                  type="text" 
-                  placeholder="Type 'LOCKED', 'SOS', 'BATLOW'..." 
-                  className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-                />
-                <button 
-                  type="submit"
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                >
-                  Send
-                </button>
-              </form>
-              <div className="flex flex-wrap gap-2 mt-3">
-                {['LOCKED', 'UNLOCKED', 'SOS', 'SAFE', 'BATLOW', 'MOVING'].map(cmd => (
-                  <button
-                    key={cmd}
-                    onClick={() => window.dispatchEvent(new CustomEvent('mock-sms', { detail: { message: cmd } }))}
-                    className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded border border-slate-700 transition-colors"
-                  >
-                    {cmd}
-                  </button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+          {onCancel && (
+            <button onClick={onCancel} className="w-full text-center text-muted-foreground text-[13px] mt-3">
+              Cancel
+            </button>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function StatusTile({ icon, label, active, color, subLabel }: { icon: any, label: string, active: boolean, color: string, subLabel?: string }) {
+// ── Main dashboard ────────────────────────────────────────────────────
+
+export function TabletDashboard() {
+  const [setup, setSetup] = useState<Setup | null>(null);
+  const [showWizard, setShowWizard] = useState(false);
+  const [run, setRun] = useState<RuntimeState>(INITIAL);
+  const [vitals, setVitals] = useState<Vitals>({ ...NORMAL_VITALS });
+
+  useEffect(() => {
+    const raw = localStorage.getItem(SETUP_KEY);
+    if (raw) {
+      try { setSetup(JSON.parse(raw)); } catch { /* ignore */ }
+    }
+  }, []);
+
+  // Live elder feed — only when a device is paired AND Firebase is configured.
+  // Without it the display runs its local simulation so it never looks dead.
+  const live = !!setup && firebaseConfigured;
+  const { deviceStatus, connected } = useFirebaseDevice(live ? setup.deviceId : null);
+
+  // Lively vitals — gentle random walk around normal. Paused while the real
+  // elder feed is streaming, otherwise the two writers would fight.
+  useEffect(() => {
+    if (live) return;
+    const id = setInterval(() => {
+      setVitals(v => ({
+        heartRate:       clamp(v.heartRate + rnd(4), 65, 85),
+        spo2:            clamp(v.spo2 + rnd(1), 96, 99),
+        temperature:     clamp(v.temperature + rnd(0.15), 36.2, 37.1),
+        respiratoryRate: clamp(v.respiratoryRate + rnd(2), 13, 18),
+        systolic:        clamp(v.systolic + rnd(4), 112, 128),
+        diastolic:       clamp(v.diastolic + rnd(3), 72, 84),
+        glucose:         clamp(v.glucose + rnd(4), 100, 120),
+      }));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [live]);
+
+  // Live vitals from the elder device.
+  useEffect(() => {
+    if (!deviceStatus || deviceStatus.heartRate == null) return;
+    setVitals({
+      heartRate:       deviceStatus.heartRate,
+      spo2:            deviceStatus.spo2 ?? NORMAL_VITALS.spo2,
+      temperature:     deviceStatus.temperature ?? NORMAL_VITALS.temperature,
+      respiratoryRate: deviceStatus.respiratoryRate ?? NORMAL_VITALS.respiratoryRate,
+      systolic:        deviceStatus.systolic ?? NORMAL_VITALS.systolic,
+      diastolic:       deviceStatus.diastolic ?? NORMAL_VITALS.diastolic,
+      glucose:         deviceStatus.glucose ?? NORMAL_VITALS.glucose,
+    });
+  }, [deviceStatus]);
+
+  // Battery / charging streamed from the elder device.
+  useEffect(() => {
+    if (!deviceStatus) return;
+    setRun(p => ({
+      ...p,
+      battery:  deviceStatus.battery ?? p.battery,
+      charging: deviceStatus.charging ?? p.charging,
+    }));
+  }, [deviceStatus]);
+
+  // A WARNING/CRITICAL condition on the elder device raises the safety card.
+  useEffect(() => {
+    if (!deviceStatus?.heartSeverity) return;
+    if (deviceStatus.heartSeverity === 'CRITICAL' || deviceStatus.heartSeverity === 'WARNING') {
+      setRun(p => ({ ...p, condition: deviceStatus.heartCondition ?? 'CONDITION ALERT' }));
+    }
+  }, [deviceStatus]);
+
+  // Health alerts pushed by the elder device → show on the activity strip.
+  useElderAlerts(live ? setup.deviceId : null, (alert) => {
+    setRun(p => ({
+      ...p,
+      lastEvent: { message: `${alert.condition} (${alert.severity})`, time: new Date() },
+      ...(isCriticalHeart(alert) ? { condition: alert.condition } : {}),
+    }));
+  });
+
+  // Event feed (mock SMS events; a live feed hooks in here).
+  useEffect(() => {
+    const handle = (e: CustomEvent) => {
+      const text = String(e.detail?.message ?? "").toUpperCase();
+      const now = new Date();
+      let msg = `Received: ${text}`;
+      setRun(p => {
+        const n = { ...p };
+        if (text.includes("SOS")) { n.sos = true; msg = "SOS alert"; }
+        if (text.includes("SOSACK") || text.includes("SAFE")) { n.sos = false; msg = "SOS cleared"; }
+        if (text.includes("FALL")) { n.fall = true; msg = "Fall detected"; }
+        if (text.includes("LOCKED")) n.doorLocked = true;
+        if (text.includes("UNLOCKED")) n.doorLocked = false;
+        if (text.includes("LIVINGLIGHTON")) n.livingLight = true;
+        if (text.includes("LIVINGLIGHTOFF")) n.livingLight = false;
+        if (text.includes("BEDLIGHTON")) n.bedLight = true;
+        if (text.includes("BEDLIGHTOFF")) n.bedLight = false;
+        if (text.includes("FANON")) n.fan = true;
+        if (text.includes("FANOFF")) n.fan = false;
+        if (text.includes("BATLOW")) n.battery = 15;
+        if (text.includes("CHARGING")) n.charging = true;
+        if (text.includes("NOTCHARGING")) n.charging = false;
+        if (text.includes("WIFIDOWN")) n.wifi = false;
+        if (text.includes("WIFIUP")) n.wifi = true;
+        if (text.includes("TORCHON")) n.torch = true;
+        if (text.includes("TORCHOFF")) n.torch = false;
+        if (text.includes("SILENT")) n.silent = true;
+        if (text.includes("UNMUTE")) n.silent = false;
+        if (text.includes("MOVING")) n.moving = true;
+        if (text.includes("STATIONARY")) n.moving = false;
+        n.lastEvent = { message: msg, time: now };
+        return n;
+      });
+    };
+    window.addEventListener("mock-sms", handle as EventListener);
+    return () => window.removeEventListener("mock-sms", handle as EventListener);
+  }, []);
+
+  // Eldest-source-wins display values (real feed overrides the simulation).
+  const battery = deviceStatus?.battery ?? run.battery;
+  const charging = deviceStatus?.charging ?? run.charging;
+  const wifiUp = live ? connected : run.wifi;
+
+  if (!setup || showWizard) {
+    return (
+      <SetupWizard
+        initial={setup}
+        onSave={(s) => { localStorage.setItem(SETUP_KEY, JSON.stringify(s)); setSetup(s); setShowWizard(false); }}
+        onCancel={setup ? () => setShowWizard(false) : undefined}
+      />
+    );
+  }
+
   return (
-    <div className={`p-3 rounded-xl border transition-all duration-300 ${active ? 'bg-slate-800 border-slate-700' : 'bg-slate-900/30 border-transparent opacity-60'}`}>
-      <div className={`mb-2 ${active ? color : 'text-slate-500'}`}>
-        {icon}
+    <div className="min-h-screen bg-background p-5 font-sans">
+      {/* Header */}
+      <header className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            <span className="text-[#FF9933]">Home</span>Sync
+            <span className="text-[#138808]">.</span>
+          </h1>
+          <span className="hidden sm:flex text-muted-foreground text-sm">{setup.room}</span>
+        </div>
+
+        <div className="flex items-center gap-4 text-muted-foreground">
+          <div className={cn(
+            "hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold",
+            wifiUp ? "bg-emerald-500/10 text-emerald-600" : "bg-amber-500/10 text-amber-600"
+          )}>
+            <span className={cn("w-2 h-2 rounded-full", wifiUp ? "bg-emerald-500" : "bg-amber-500")} />
+            {wifiUp ? "ONLINE" : "OFFLINE"}
+          </div>
+          <div className="flex items-center gap-1.5 text-[13px] font-mono">
+            <Battery className={cn("w-4 h-4", battery < 20 ? "text-red-500" : "text-emerald-500")} />
+            {battery}%
+          </div>
+          <div className="text-xl font-mono">
+            {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </div>
+          <button
+            onClick={() => setShowWizard(true)}
+            title="Reconfigure"
+            className="w-8 h-8 rounded-full bg-muted flex items-center justify-center active:opacity-70"
+          >
+            <RefreshCcw className="w-4 h-4" />
+          </button>
+        </div>
+      </header>
+
+      <main className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Safety */}
+        <section className={cn(
+          "rounded-3xl border p-5 flex flex-col gap-2 col-span-1",
+          run.sos || run.condition ? "border-red-500/50 bg-red-500/10 animate-pulse" : "border-border bg-card"
+        )}>
+          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium">
+            <Shield className="w-4 h-4" /> Safety
+          </div>
+          <div className={cn("text-3xl font-bold leading-none mt-1", (run.sos || run.condition) ? "text-red-600" : "text-emerald-600")}>
+            {run.sos ? "SOS ACTIVE" : run.condition ? "CONDITION" : "SECURE"}
+          </div>
+          {run.condition && !run.sos && (
+            <div className="mt-1 bg-red-500/15 text-red-600 text-[12px] font-semibold rounded-xl p-2 flex items-center gap-2">
+              <Heart className="w-4 h-4" /> {run.condition}
+            </div>
+          )}
+          {run.fall && (
+            <div className="mt-1 bg-red-500/15 text-red-600 text-[12px] font-semibold rounded-xl p-2 flex items-center gap-2">
+              <Activity className="w-4 h-4" /> Fall detected
+            </div>
+          )}
+          <div className="text-[12px] text-muted-foreground mt-2">{setup.deviceId}</div>
+        </section>
+
+        {/* Vitals */}
+        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-2">
+          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-3">
+            <Heart className="w-4 h-4" /> Vitals <span className="text-[10px] text-muted-foreground/70">· {live ? "from elder device" : "simulated"}</span>
+          </div>
+          <MonitorPanel vitals={vitals} />
+        </section>
+
+        {/* Home */}
+        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-2">
+          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-3">
+            <Zap className="w-4 h-4" /> Home
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <ToggleTile active={run.doorLocked} icon={run.doorLocked ? <Lock className="w-5 h-5" /> : <Unlock className="w-5 h-5" />}
+              label={run.doorLocked ? "Door locked" : "Door unlocked"} accent={run.doorLocked ? "text-blue-500" : "text-orange-500"} />
+            <ToggleTile active={run.livingLight} icon={<Sun className="w-5 h-5" />} label="Living room" accent="text-yellow-500" />
+            <ToggleTile active={run.bedLight}    icon={<Moon className="w-5 h-5" />} label="Bedroom" accent="text-purple-500" />
+            <ToggleTile active={run.fan}         icon={<Wind className="w-5 h-5" />} label="Fan" accent="text-cyan-500" />
+          </div>
+        </section>
+
+        {/* Device */}
+        <section className="rounded-3xl border border-border bg-card p-5 col-span-1">
+          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-3">
+            <Smartphone className="w-4 h-4" /> Elder device
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <ToggleTile active={run.torch}  icon={<Power className="w-5 h-5" />} label="Torch" accent="text-yellow-500" />
+            <ToggleTile active={!run.silent} icon={run.silent ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+              label={run.silent ? "Silent" : "Ringing"} accent="text-blue-500" />
+            <ToggleTile active={charging} icon={<Zap className="w-5 h-5" />} label={charging ? "Charging" : "On battery"} accent="text-emerald-500" />
+            <ToggleTile active={wifiUp} icon={<Wifi className="w-5 h-5" />} label={wifiUp ? "Wi-Fi" : "Offline"} accent="text-sky-500" />
+          </div>
+        </section>
+
+        {/* Activity + location */}
+        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-2">
+          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-3">
+            <Clock className="w-4 h-4" /> Activity
+          </div>
+          {run.lastEvent ? (
+            <div className="flex items-center gap-3 py-1">
+              <span className="w-2 h-2 rounded-full bg-primary" />
+              <div className="text-[14px] text-foreground">{run.lastEvent.message}</div>
+              <div className="text-[12px] text-muted-foreground ml-auto font-mono">
+                {run.lastEvent.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </div>
+            </div>
+          ) : (
+            <p className="text-[13px] text-muted-foreground">No events yet. Watch this space for alerts and replies.</p>
+          )}
+
+          <div className="border-t border-border mt-4 pt-3 mt-3 flex items-center gap-3">
+            <MapPin className="w-4 h-4 text-muted-foreground" />
+            <div className="text-[14px] text-foreground">Home — 123 Main St</div>
+            <span className={cn(
+              "text-[11px] font-semibold px-2.5 py-1 rounded-full",
+              run.moving ? "bg-blue-500/10 text-blue-600" : "bg-muted text-muted-foreground"
+            )}>
+              {run.moving ? "Moving" : "Stationary"}
+            </span>
+          </div>
+        </section>
+
+        {/* Conditions / heartbeat strip */}
+        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-1 flex flex-col justify-center gap-3">
+          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium">
+            <CheckCircle2 className="w-4 h-4" /> Status
+          </div>
+          <div className={cn(
+            "text-[15px] font-semibold flex items-center gap-2",
+            run.condition ? "text-red-600" : "text-emerald-600"
+          )}>
+            <Bell className="w-4 h-4" /> {run.condition ? run.condition : "No alerts"}
+          </div>
+          <div className="flex items-center gap-2 text-muted-foreground text-[12px]">
+            <Thermometer className="w-4 h-4" /> Home {run.roomTemp}°C
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+// ── Monitor-style vitals panel ──────────────────────────────────────
+
+const POINTS = 90;
+const GLOW = "drop-shadow(0 0 3px VAR) drop-shadow(0 0 1px VAR)";
+
+type TraceKey = "heartRate" | "spo2" | "temperature" | "respiratoryRate" | "systolic" | "diastolic";
+
+const TRACES: { key: TraceKey; label: string; unit: string; min: number; max: number; color: string }[] = [
+  { key: "heartRate",       label: "HR",    unit: "bpm",   min: 55,  max: 105, color: "#4ade80" },
+  { key: "spo2",            label: "SpO₂",  unit: "%",     min: 93,  max: 101, color: "#22d3ee" },
+  { key: "respiratoryRate", label: "RESP",  unit: "/min",  min: 8,   max: 26,  color: "#facc15" },
+  { key: "temperature",     label: "TEMP",  unit: "°C",    min: 35.8, max: 37.6, color: "#fb923c" },
+  { key: "systolic",        label: "SYS",   unit: "mmHg",  min: 95,  max: 145, color: "#a78bfa" },
+  { key: "diastolic",       label: "DIA",   unit: "mmHg",  min: 60,  max: 100, color: "#f472b6" },
+];
+
+function fmt(v: number, t: (typeof TRACES)[number]) {
+  return t.key === "temperature" ? v.toFixed(1) : String(Math.round(v));
+}
+
+function MonitorPanel({ vitals }: { vitals: Vitals }) {
+  const [buffers, setBuffers] = useState<Record<string, number[]>>({});
+
+  useEffect(() => {
+    setBuffers(prev => {
+      const next: Record<string, number[]> = {};
+      for (const t of TRACES) {
+        const arr = [...(prev[t.key] ?? []), vitals[t.key]];
+        next[t.key] = arr.length > POINTS ? arr.slice(arr.length - POINTS) : arr;
+      }
+      return next;
+    });
+  }, [vitals]);
+
+  return (
+    <div className="rounded-2xl bg-[#05090f] border border-white/10 overflow-hidden">
+      <div className="grid grid-cols-2 gap-x-3">
+        {TRACES.map(t => (
+          <WaveStrip key={t.key} trace={t} values={buffers[t.key] ?? []} />
+        ))}
       </div>
-      <div className="font-medium text-slate-200">{label}</div>
-      {subLabel && <div className="text-xs text-slate-500">{subLabel}</div>}
-      <div className="flex items-center gap-1 mt-1">
-        <div className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-green-500' : 'bg-slate-600'}`} />
-        <span className="text-[10px] uppercase tracking-wider text-slate-500">{active ? 'ON' : 'OFF'}</span>
+      <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-mono tracking-widest text-white/50 border-t border-white/10">
+        <span>GLUC {vitals.glucose} mg/dL</span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> LIVE
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function WaveStrip({ trace, values }: { trace: (typeof TRACES)[number]; values: number[] }) {
+  const yOf = (v: number) => 2 + (1 - (Math.min(trace.max, Math.max(trace.min, v)) - trace.min) / (trace.max - trace.min)) * 20;
+  const points = values.map((v, i) => `${(i / (POINTS - 1)) * 100},${yOf(v).toFixed(2)}`).join(" ");
+  const last = values.length ? values[values.length - 1] : null;
+
+  return (
+    <div className="flex flex-col h-[74px] px-3 pt-2">
+      <div className="flex items-baseline justify-between leading-none">
+        <span className="text-[10px] font-mono font-bold tracking-[0.2em] text-white/60">{trace.label}</span>
+        <span className="text-[12px] font-mono font-bold text-white">
+          {last != null ? fmt(last, trace) : "--"}
+          <span className="text-white/40 text-[9px] ml-0.5">{trace.unit}</span>
+        </span>
+      </div>
+      <svg viewBox="0 0 100 24" preserveAspectRatio="none" className="flex-1 w-full -ml-1">
+        <line x1="0" y1="12" x2="100" y2="12" stroke="rgba(255,255,255,0.07)" />
+        <line x1="0" y1="5" x2="100" y2="5" stroke="rgba(255,255,255,0.03)" />
+        <line x1="0" y1="19" x2="100" y2="19" stroke="rgba(255,255,255,0.03)" />
+        <line x1="100" y1="0" x2="100" y2="24" stroke="rgba(255,255,255,0.12)" />
+        {last != null && (
+          <line x1="0" y1={yOf(last)} x2="100" y2={yOf(last)} stroke={trace.color} strokeOpacity="0.18" />
+        )}
+        <polyline
+          points={points}
+          fill="none"
+          stroke={trace.color}
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+          style={{ filter: GLOW.replaceAll("VAR", trace.color) }}
+        />
+      </svg>
+    </div>
+  );
+}
+
+function ToggleTile({ active, icon, label, accent }: { active: boolean; icon: React.ReactNode; label: string; accent: string }) {
+  return (
+    <div className={cn(
+      "rounded-2xl border p-3 flex flex-col gap-2 transition-colors",
+      active ? "border-border bg-muted/40" : "border-border bg-transparent opacity-60"
+    )}>
+      <div className={cn(active ? accent : "text-muted-foreground")}>{icon}</div>
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] font-medium text-foreground">{label}</span>
+        <span className={cn("w-1.5 h-1.5 rounded-full", active ? "bg-emerald-500" : "bg-slate-400")} />
       </div>
     </div>
   );

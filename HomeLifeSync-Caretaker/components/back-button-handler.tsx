@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { App } from '@capacitor/app';
+import { PluginListenerHandle } from '@capacitor/core';
 import { useRouter, usePathname } from 'next/navigation';
 
 export function BackButtonHandler() {
@@ -9,10 +10,12 @@ export function BackButtonHandler() {
   const pathname = usePathname();
 
   useEffect(() => {
-    const handleBackButton = App.addListener('backButton', ({ canGoBack }) => {
+    let handle: PluginListenerHandle | null = null;
+
+    App.addListener('backButton', ({ canGoBack }) => {
       // Define home routes that should exit app
-      const homeRoutes = ['/', '/dashboard'];
-      
+      const homeRoutes = ['/', '/caretaker'];
+
       if (homeRoutes.includes(pathname)) {
         // Exit app if on home screen
         App.exitApp();
@@ -20,13 +23,15 @@ export function BackButtonHandler() {
         // Navigate back if possible
         router.back();
       } else {
-        // Go to dashboard if can't go back
-        router.push('/dashboard');
+        // Go to home if can't go back
+        router.push('/');
       }
+    }).then((h) => {
+      handle = h;
     });
 
     return () => {
-      handleBackButton.remove();
+      if (handle) handle.remove();
     };
   }, [pathname, router]);
 

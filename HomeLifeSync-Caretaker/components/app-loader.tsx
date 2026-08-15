@@ -7,10 +7,10 @@ export function AppLoader() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Show loader for 2 seconds on app open
+    // Show loader briefly on app open
     const timer = setTimeout(() => {
       setIsLoading(false);
-    }, 2000);
+    }, 1100);
 
     return () => clearTimeout(timer);
   }, []);
@@ -18,9 +18,9 @@ export function AppLoader() {
   if (!isLoading) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#F5F6F8]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
       <div className="text-center space-y-6">
-        <h1 className="text-4xl font-bold text-[#1A1A1A]" style={{ fontFamily: '-apple-system, SF Pro Display, system-ui, sans-serif' }}>
+        <h1 className="text-4xl font-bold text-foreground" style={{ fontFamily: '-apple-system, SF Pro Display, system-ui, sans-serif' }}>
           HomeSync
         </h1>
         <MacOSLoader />

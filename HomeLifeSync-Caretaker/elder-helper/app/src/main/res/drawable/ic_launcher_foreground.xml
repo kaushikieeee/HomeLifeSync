@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- House icon centred in the 108dp adaptive icon canvas -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28 L22,54 h8 v26 h16 V62 h16 v18 h16 V54 h8 Z" />
+
+    <!-- Small heart below -->
+    <path
+        android:fillColor="#FF6B6B"
+        android:pathData="M54,80 C54,80 44,73 44,67 C44,63.7 46.7,61 50,61 C51.8,61 53.4,61.9 54,63 C54.6,61.9 56.2,61 58,61 C61.3,61 64,63.7 64,67 C64,73 54,80 54,80 Z" />
+</vector>

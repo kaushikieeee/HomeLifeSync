@@ -35,7 +35,6 @@ export function SlideButton({ onSuccess, label, icon, color = "bg-blue-500", cla
     }
   }, []);
 
-  const backgroundOpacity = useTransform(x, [0, dragConstraints.right], [0.5, 1]);
   const textOpacity = useTransform(x, [0, dragConstraints.right / 2], [1, 0]);
 
   const handleDrag = () => {

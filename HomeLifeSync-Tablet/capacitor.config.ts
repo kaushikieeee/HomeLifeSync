@@ -1,9 +1,13 @@
 import { CapacitorConfig } from '@capacitor/cli';
 
+// HomeSync Tablet — thin Android shell over the CONSOLIDATED caretaker web
+// app. The tablet experience lives at /tablet in HomeLifeSync-Caretaker, so
+// this project packages that static export and launches straight into it
+// (see MainActivity). Build with build-apks.sh.
 const config: CapacitorConfig = {
   appId: 'com.homelifesync.tablet',
   appName: 'HomeSync Tablet',
-  webDir: 'out',
+  webDir: '../HomeLifeSync-Caretaker/out',
   server: {
     androidScheme: 'https',
     cleartext: true
@@ -21,7 +25,7 @@ const config: CapacitorConfig = {
       showSpinner: false
     },
     StatusBar: {
-      style: 'DARK',
+      style: 'LIGHT',
       backgroundColor: '#00000000',
       overlay: true
     }

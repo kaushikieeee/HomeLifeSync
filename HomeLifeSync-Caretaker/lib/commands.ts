@@ -6,6 +6,53 @@ export type CommandCategory = {
   }[];
 };
 
+export type HeartAlert = {
+  id: string;
+  type?: string;
+  condition: string;
+  severity: string;
+  ts: number;
+  source?: 'local' | 'elder';
+  hr?: number;
+  spo2?: number;
+  temperature?: number;
+  respiratoryRate?: number;
+  systolic?: number;
+  diastolic?: number;
+  glucose?: number;
+};
+
+export const isCriticalHeart = (a: HeartAlert) =>
+  a.severity === 'CRITICAL' || a.severity === 'WARNING';
+
+/**
+ * Commands actually implemented by the elder-helper Android app.
+ * Anything not in this set will (honestly) be shown as unavailable in
+ * the caretaker UI instead of silently failing with "Unknown command".
+ */
+export const IMPLEMENTED_COMMANDS: ReadonlySet<string> = new Set([
+  // Location
+  'LOC', 'LOCFAST', 'LOCADDR', 'MOVESTATE', 'ROUTINE',
+  // Wearable health simulation (Scenarios in lib/health.ts)
+  'HRNORMAL', 'HRMI', 'HRTACHY', 'HRBRADY', 'HRARRHY', 'HRAFIB',
+  'HYPOXIA', 'FEVER', 'HYPOTHERMIA', 'BPCRISIS', 'HYPOTENSION',
+  'TACHYPNEA', 'BRADYPNEA', 'HYPERGLYCEMIA', 'HYPOGLYCEMIA',
+  // Safety
+  'SOS', 'SOSACK', 'FALLCHECK', 'ACTCHECK',
+  // Device controls
+  'RING', 'ALRM', 'STOPRING', 'TORCHON', 'TORCHOFF', 'SCREENON',
+  'SCREENDIM', 'SCREENMAX', 'VIBRATE', 'MUTE', 'UNMUTE', 'SILENT',
+  'VOLMAX', 'VOLLOW',
+  // Messaging
+  'ACK', 'CHECKIN', 'IOK', 'CALLME', 'AUTOREPLYON', 'AUTOREPLYOFF',
+  // Battery / status
+  'BATNOW', 'BATHEALTH', 'CHARGESTATE', 'TEMPNOW', 'STORAGE', 'STATUS',
+  // Connectivity
+  'NETSTATE', 'PING', 'WIFIUP', 'WIFIDOWN',
+  // Routine reminders
+  'MEDR', 'WATERREM', 'BEDTIME', 'WAKEUP', 'DAYSTART', 'DAYEND',
+]);
+
 export const SMS_COMMANDS: CommandCategory[] = [
   {
     title: "1. Location & Movement (Basic)",
@@ -18,8 +65,23 @@ export const SMS_COMMANDS: CommandCategory[] = [
     ]
   },
   {
-    title: "2. Health / Heart-Rate Monitoring",
+    title: "2. Health / Wearable Monitoring",
     commands: [
+      { cmd: "HRNORMAL", desc: "Reset wearable simulation to normal" },
+      { cmd: "HRMI", desc: "Simulate heart attack (MI)" },
+      { cmd: "HRAFIB", desc: "Simulate atrial fibrillation" },
+      { cmd: "HRTACHY", desc: "Simulate tachycardia" },
+      { cmd: "HRBRADY", desc: "Simulate bradycardia" },
+      { cmd: "HRARRHY", desc: "Simulate arrhythmia" },
+      { cmd: "HYPOXIA", desc: "Simulate low oxygen (SpO2)" },
+      { cmd: "FEVER", desc: "Simulate high fever" },
+      { cmd: "HYPOTHERMIA", desc: "Simulate hypothermia" },
+      { cmd: "BPCRISIS", desc: "Simulate hypertensive crisis" },
+      { cmd: "HYPOTENSION", desc: "Simulate hypotension" },
+      { cmd: "TACHYPNEA", desc: "Simulate fast breathing" },
+      { cmd: "BRADYPNEA", desc: "Simulate slow breathing" },
+      { cmd: "HYPERGLYCEMIA", desc: "Simulate high glucose" },
+      { cmd: "HYPOGLYCEMIA", desc: "Simulate low glucose" },
       { cmd: "HRNOW", desc: "Fetch current HR from wearable API" },
       { cmd: "HRAVG", desc: "Average HR of last 30 minutes" },
       { cmd: "HRPEAK", desc: "Last recorded HR peak" },
@@ -30,8 +92,8 @@ export const SMS_COMMANDS: CommandCategory[] = [
   {
     title: "3. Safety & Alerts",
     commands: [
-      { cmd: "SOS", desc: "Elder triggers SOS" },
-      { cmd: "SOSACK", desc: "Caretaker tests SOS" },
+      { cmd: "SOS", desc: "Trigger emergency SOS (alarm + vibrate)" },
+      { cmd: "SOSACK", desc: "Acknowledge / stop the SOS alarm" },
       { cmd: "FALLCHECK", desc: "Check if device detected fall" },
       { cmd: "NOINACT", desc: "Inactivity for X minutes" },
       { cmd: "ACTCHECK", desc: "Confirm activity now" },
@@ -52,6 +114,7 @@ export const SMS_COMMANDS: CommandCategory[] = [
     commands: [
       { cmd: "RING", desc: "Ring phone loudly" },
       { cmd: "ALRM", desc: "Play siren alarm" },
+      { cmd: "STOPRING", desc: "Stop ringing / siren immediately" },
       { cmd: "TORCHON", desc: "Turn flashlight ON" },
       { cmd: "TORCHOFF", desc: "Turn flashlight OFF" },
       { cmd: "SCREENON", desc: "Turn device screen ON" },

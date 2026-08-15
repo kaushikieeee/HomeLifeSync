@@ -1,0 +1,20 @@
+{
+  "name": "homelifesync-elder",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "cap:sync": "npx cap sync android",
+    "cap:open": "npx cap open android",
+    "android": "pnpm build && npx cap sync android && npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.4.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.4",
+    "typescript": "^5",
+    "vite": "^6.0.7"
+  }
+}

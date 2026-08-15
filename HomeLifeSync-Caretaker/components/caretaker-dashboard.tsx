@@ -1,329 +1,268 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from "motion/react";
-import { 
-  User,
-  Settings,
-  LogOut,
-  MessageSquare,
-  Send,
-  Search, Star, Zap, MapPin, Phone, Bell, Activity, Shield,
-  Home, Smartphone, Wifi, Battery, Camera, Grid, Clock,
-  Thermometer, Power, FileText, Brain, MessageCircle, List,
-  ChevronRight, X, Lock, RefreshCw, Trash2
+import {
+  User, Settings, LogOut, Send, Search, X, Shield, MapPin, Phone,
+  Bell, Zap, ChevronRight, Home, Command, Clock, Pill,
+  Lock, MessageSquare, Smartphone, Activity, Brain, Wifi, Camera,
+  Grid, Thermometer, Power, FileText, MessageCircle, List,
+  CheckCircle2, Loader2, BatteryLow,
 } from 'lucide-react';
 import { useHaptic, useSelectionHaptic, ImpactStyle } from '@/hooks/use-haptic';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { SMS_COMMANDS } from '@/lib/commands';
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { SMS_COMMANDS, IMPLEMENTED_COMMANDS } from '@/lib/commands';
 import { SlideButton } from '@/components/ui/slide-button';
+import { useFirebaseDevice } from '@/hooks/use-firebase-device';
+import { useHealthMonitor } from '@/hooks/use-heart-monitor';
+import { useElderAlerts } from '@/hooks/use-elder-alerts';
+import { VitalsCard } from '@/components/vitals-card';
+import { HeartAlertOverlay } from '@/components/heart-alert-overlay';
+import { SCENARIOS, NORMAL_VITALS } from '@/lib/health';
+import { ConnectWizard } from '@/components/connect-wizard';
 
-// Add type definition for Cordova SMS plugin
+// ── Types ──────────────────────────────────────────────────────────────────────
+
 declare global {
   interface Window {
-    sms?: {
-      send: (
-        number: string,
-        message: string,
-        options: { android: { intent: string } },
-        success: () => void,
-        error: (err: any) => void
-      ) => void;
-      hasPermission: (
-        success: (hasPermission: boolean) => void,
-        error: (err: any) => void
-      ) => void;
-    };
     Fingerprint?: {
-      isAvailable: (
-        success: (result: "OK" | "finger" | "face" | "biometric") => void,
-        error: (message: string) => void
-      ) => void;
-      show: (
-        options: {
-          title?: string;
-          subtitle?: string;
-          description?: string;
-          fallbackButtonTitle?: string;
-          disableBackup?: boolean;
-          clientId?: string;
-          clientSecret?: string;
-        },
-        success: (result: any) => void,
-        error: (err: any) => void
-      ) => void;
+      isAvailable: (s: (r: string) => void, e: (m: string) => void) => void;
+      show: (opts: object, s: (r: any) => void, e: (err: any) => void) => void;
     };
   }
 }
 
-// iOS Colors
-const IOS_COLORS = {
-  blue: "bg-[#007AFF]",
-  green: "bg-[#34C759]",
-  indigo: "bg-[#5856D6]",
-  orange: "bg-[#FF9500]",
-  pink: "bg-[#FF2D55]",
-  purple: "bg-[#AF52DE]",
-  red: "bg-[#FF3B30]",
-  teal: "bg-[#5AC8FA]",
-  yellow: "bg-[#FFCC00]",
-  gray: "bg-[#8E8E93]",
-  gray2: "bg-[#AEAEB2]",
-  gray3: "bg-[#C7C7CC]",
-  gray4: "bg-[#D1D1D6]",
-  gray5: "bg-[#E5E5EA]",
-  gray6: "bg-[#F2F2F7]",
-};
+const DANGEROUS_COMMANDS = new Set(['REBOOT', 'POWEROFF', 'WIPE']);
 
-// 9-Grid Important Commands
-const IMPORTANT_COMMANDS = [
-  { cmd: "LOC", label: "Locate", icon: <MapPin className="w-5 h-5" />, color: "bg-blue-500" },
-  { cmd: "SOS", label: "SOS", icon: <Shield className="w-5 h-5" />, color: "bg-red-500" },
-  { cmd: "RING", label: "Ring", icon: <Bell className="w-5 h-5" />, color: "bg-yellow-500" },
-  { cmd: "CALLME", label: "Call Me", icon: <Phone className="w-5 h-5" />, color: "bg-green-500" },
-  { cmd: "BATNOW", label: "Battery", icon: <Battery className="w-5 h-5" />, color: "bg-green-500" },
-  { cmd: "PHOTO", label: "Photo", icon: <Camera className="w-5 h-5" />, color: "bg-indigo-500" },
-  { cmd: "CHECKIN", label: "Check In", icon: <Activity className="w-5 h-5" />, color: "bg-teal-500" },
-  { cmd: "TORCHON", label: "Torch", icon: <Zap className="w-5 h-5" />, color: "bg-orange-500" },
-  { cmd: "ALRM", label: "Siren", icon: <Bell className="w-5 h-5" />, color: "bg-red-600" },
-];
+// ── Category styling ───────────────────────────────────────────────────────────
 
-// High Level Commands
-const HIGH_LEVEL_COMMANDS = [
-  { cmd: "LOCK", label: "Lock Device", icon: <Lock className="w-5 h-5" />, color: "bg-gray-900" },
-  { cmd: "POWEROFF", label: "Power Off", icon: <Power className="w-5 h-5" />, color: "bg-red-600" },
-  { cmd: "REBOOT", label: "Reboot", icon: <RefreshCw className="w-5 h-5" />, color: "bg-orange-600" },
-  { cmd: "WIPE", label: "Wipe Data", icon: <Trash2 className="w-5 h-5" />, color: "bg-red-800" },
-];
-
-// Icon mapping with colors
 const getCategoryStyle = (title: string) => {
-  if (title.includes("Location")) return { icon: <MapPin className="w-5 h-5 text-white" />, color: IOS_COLORS.blue };
-  if (title.includes("Health")) return { icon: <Activity className="w-5 h-5 text-white" />, color: IOS_COLORS.red };
-  if (title.includes("Safety")) return { icon: <Shield className="w-5 h-5 text-white" />, color: IOS_COLORS.orange };
-  if (title.includes("Behaviour")) return { icon: <Brain className="w-5 h-5 text-white" />, color: IOS_COLORS.purple };
-  if (title.includes("Device")) return { icon: <Smartphone className="w-5 h-5 text-white" />, color: IOS_COLORS.gray };
-  if (title.includes("Messaging")) return { icon: <MessageCircle className="w-5 h-5 text-white" />, color: IOS_COLORS.green };
-  if (title.includes("Camera")) return { icon: <Camera className="w-5 h-5 text-white" />, color: IOS_COLORS.yellow };
-  if (title.includes("App")) return { icon: <Grid className="w-5 h-5 text-white" />, color: IOS_COLORS.indigo };
-  if (title.includes("Battery")) return { icon: <Battery className="w-5 h-5 text-white" />, color: IOS_COLORS.green };
-  if (title.includes("Internet")) return { icon: <Wifi className="w-5 h-5 text-white" />, color: IOS_COLORS.blue };
-  if (title.includes("Routine")) return { icon: <Clock className="w-5 h-5 text-white" />, color: IOS_COLORS.teal };
-  if (title.includes("Geofencing")) return { icon: <MapPin className="w-5 h-5 text-white" />, color: IOS_COLORS.pink };
-  if (title.includes("Environment")) return { icon: <Thermometer className="w-5 h-5 text-white" />, color: IOS_COLORS.orange };
-  if (title.includes("Home")) return { icon: <Home className="w-5 h-5 text-white" />, color: IOS_COLORS.yellow };
-  if (title.includes("System")) return { icon: <Power className="w-5 h-5 text-white" />, color: IOS_COLORS.gray };
-  if (title.includes("AI")) return { icon: <FileText className="w-5 h-5 text-white" />, color: IOS_COLORS.purple };
-  return { icon: <List className="w-5 h-5 text-white" />, color: IOS_COLORS.gray };
+  const t = title.replace(/^\d+\.\s*/, '');
+  if (t.includes("Location"))    return { icon: <MapPin      className="w-4 h-4" />, chip: "bg-blue-500/10 text-blue-500" };
+  if (t.includes("Health"))      return { icon: <Activity    className="w-4 h-4" />, chip: "bg-rose-500/10 text-rose-500" };
+  if (t.includes("Safety"))      return { icon: <Shield      className="w-4 h-4" />, chip: "bg-red-500/10 text-red-500" };
+  if (t.includes("Behaviour"))   return { icon: <Brain       className="w-4 h-4" />, chip: "bg-violet-500/10 text-violet-500" };
+  if (t.includes("Device"))      return { icon: <Smartphone  className="w-4 h-4" />, chip: "bg-slate-500/10 text-slate-500" };
+  if (t.includes("Messaging"))   return { icon: <MessageCircle className="w-4 h-4" />, chip: "bg-teal-500/10 text-teal-600" };
+  if (t.includes("Camera"))      return { icon: <Camera      className="w-4 h-4" />, chip: "bg-amber-500/10 text-amber-500" };
+  if (t.includes("App"))         return { icon: <Grid        className="w-4 h-4" />, chip: "bg-blue-500/10 text-blue-500" };
+  if (t.includes("Battery"))     return { icon: <Zap         className="w-4 h-4" />, chip: "bg-emerald-500/10 text-emerald-600" };
+  if (t.includes("Internet"))    return { icon: <Wifi        className="w-4 h-4" />, chip: "bg-cyan-500/10 text-cyan-600" };
+  if (t.includes("Routine"))     return { icon: <Clock       className="w-4 h-4" />, chip: "bg-teal-500/10 text-teal-600" };
+  if (t.includes("Geofencing"))  return { icon: <MapPin      className="w-4 h-4" />, chip: "bg-indigo-500/10 text-indigo-500" };
+  if (t.includes("Environment")) return { icon: <Thermometer className="w-4 h-4" />, chip: "bg-orange-500/10 text-orange-500" };
+  if (t.includes("Home"))        return { icon: <Home        className="w-4 h-4" />, chip: "bg-emerald-500/10 text-emerald-600" };
+  if (t.includes("System"))      return { icon: <Power       className="w-4 h-4" />, chip: "bg-slate-500/10 text-slate-500" };
+  if (t.includes("AI"))          return { icon: <FileText    className="w-4 h-4" />, chip: "bg-purple-500/10 text-purple-500" };
+  return { icon: <List className="w-4 h-4" />, chip: "bg-muted text-muted-foreground" };
 };
+
+const formatTitle = (title: string) =>
+  title.replace(/^\d+\s*\.\s*/, '').replace(/ \(.*\)/, '');
+
+// ── Main component ─────────────────────────────────────────────────────────────
+
+type Tab = 'home' | 'commands';
 
 export function CaretakerDashboard() {
-  const router = useRouter();
-  const haptic = useHaptic();
+  const router          = useRouter();
+  const haptic          = useHaptic();
   const selectionHaptic = useSelectionHaptic();
-  const [targetPhoneNumber, setTargetPhoneNumber] = useState<string | null>('9597140692');
-  const [phoneInput, setPhoneInput] = useState('');
+  const scrollRef       = useRef<HTMLDivElement>(null);
+
+  // ── Device ID state ──────────────────────────────────────────────
+  const [deviceId,    setDeviceId]    = useState<string | null>(null);
+  const [role,        setRole]        = useState('');
+  const [name,        setName]        = useState('');
+  const [scrolled,    setScrolled]    = useState(false);
+  const [tab,         setTab]         = useState<Tab>('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [scrolled, setScrolled] = useState(false);
 
-  // Handle scroll for header blur effect
+  // ── Firebase hook ────────────────────────────────────────────────
+  const { deviceStatus, history, cmdStatus, lastReply, send, connected } =
+    useFirebaseDevice(deviceId);
+
+  // ── Wearable vitals + loud health alerts ─────────────────────────
+  const health = useHealthMonitor();
+  useElderAlerts(deviceId, health.pushElderAlert);
+
+  // Sync vitals from the SAME feed the elder device publishes, so heart
+  // rate is identical on the elder phone, the caretaker and the tablet.
   useEffect(() => {
-    const handleScroll = () => {
-      if (scrollRef.current) {
-        setScrolled(scrollRef.current.scrollTop > 20);
-      }
-    };
+    if (!deviceStatus || deviceStatus.heartRate == null) {
+      health.setExternalSource(null);
+      return;
+    }
+    health.setExternalSource({
+      heartRate:       deviceStatus.heartRate,
+      spo2:            deviceStatus.spo2 ?? NORMAL_VITALS.spo2,
+      temperature:     deviceStatus.temperature ?? NORMAL_VITALS.temperature,
+      respiratoryRate: deviceStatus.respiratoryRate ?? NORMAL_VITALS.respiratoryRate,
+      systolic:        deviceStatus.systolic ?? NORMAL_VITALS.systolic,
+      diastolic:       deviceStatus.diastolic ?? NORMAL_VITALS.diastolic,
+      glucose:         deviceStatus.glucose ?? NORMAL_VITALS.glucose,
+    });
+  }, [deviceStatus]);
+
+  // Local simulation; when an elder device is connected, echo the same
+  // scenario command so BOTH sides go into the same state and alert.
+  const handleSimulate = (cmd: string) => {
+    health.simulate(cmd);
+    const s = SCENARIOS.find(x => x.cmd === cmd);
+    if (cmd !== 'HRNORMAL' && connected && s) runCommand(cmd, s.desc);
+  };
+
+  // ── Load saved device ID ─────────────────────────────────────────
+  useEffect(() => {
+    const saved = localStorage.getItem('elder_device_id');
+    if (saved) setDeviceId(saved);
+    setRole(localStorage.getItem('caretaker_role') ?? '');
+    setName(localStorage.getItem('caretaker_name') ?? '');
+  }, []);
+
+  const saveDeviceId = (id: string) => {
+    if (id.trim()) {
+      localStorage.setItem('elder_device_id', id.trim());
+      setDeviceId(id.trim());
+    } else {
+      localStorage.removeItem('elder_device_id');
+      setDeviceId(null);
+    }
+  };
+
+  // ── Scroll handler ───────────────────────────────────────────────
+  useEffect(() => {
     const div = scrollRef.current;
-    div?.addEventListener('scroll', handleScroll);
-    return () => div?.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  // Load saved phone number
-  useEffect(() => {
-    const savedPhone = localStorage.getItem('target_phone_number');
-    if (savedPhone) {
-      setTargetPhoneNumber(savedPhone);
-    } else {
-      localStorage.setItem('target_phone_number', '9597140692');
-    }
-  }, []);
-
-  const savePhoneNumber = (phone: string) => {
-    if (phone) {
-      localStorage.setItem('target_phone_number', phone);
-      setTargetPhoneNumber(phone);
-      toast.success('Phone number saved');
-    } else {
-      localStorage.removeItem('target_phone_number');
-      setTargetPhoneNumber(null);
-    }
-  };
-
-  const handleConnect = () => {
-    if (phoneInput) {
-      savePhoneNumber(phoneInput);
-    }
-  };
-
-  const handleHighLevelCommand = (cmd: string, label: string) => {
-    haptic(ImpactStyle.Medium);
-    if (!targetPhoneNumber) {
-      toast.error("No phone number set");
-      return;
-    }
-
-    const performAction = () => {
-      sendSMS(cmd, label);
+    if (!div) return;
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; setScrolled(div.scrollTop > 20); });
     };
+    div.addEventListener('scroll', onScroll, { passive: true });
+    return () => { div.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf); };
+  }, []);
 
-    if (window.Fingerprint) {
-      window.Fingerprint.isAvailable(
-        () => {
-          window.Fingerprint!.show(
-            {
-              title: "Authentication Required",
-              subtitle: `Authenticate to ${label}`,
-              description: "This action requires authorization",
-              fallbackButtonTitle: "Cancel",
-              disableBackup: true,
-            },
-            () => {
-              performAction();
-            },
-            (err) => {
-              toast.error("Authentication failed");
-            }
-          );
-        },
-        () => {
-          // Biometric not available
-          if (confirm(`Are you sure you want to ${label}?`)) {
-            performAction();
-          }
-        }
-      );
-    } else {
-      if (confirm(`Are you sure you want to ${label}?`)) {
-        performAction();
-      }
-    }
+  // ── Tab switch ───────────────────────────────────────────────────
+  const switchTab = (next: Tab) => {
+    if (next === tab) return;
+    selectionHaptic();
+    setTab(next);
+    setActiveCategory(null);
+    requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }));
   };
 
-  const sendSMS = (command: string, description: string) => {
-    if (!targetPhoneNumber) {
-      toast.error("No phone number set");
+  // ── Run a command via Firebase ───────────────────────────────────
+  const runCommand = async (cmd: string, desc: string) => {
+    if (!deviceId) { toast.error('No device connected'); return; }
+
+    if (!IMPLEMENTED_COMMANDS.has(cmd)) {
+      toast.info(`${cmd} isn't available on the elder device yet.`);
       return;
     }
-    
-    haptic(ImpactStyle.Medium);
-    
-    if (typeof window !== 'undefined' && window.sms) {
-      const send = () => {
-        toast.info(`Sending ${command}...`);
-        window.sms!.send(
-          targetPhoneNumber,
-          command,
-          { android: { intent: '' } },
-          () => {
-            toast.success(`Sent: ${command}`);
-          },
-          (err) => {
-            console.error('SMS Send Error:', err);
-            toast.error(`Failed to send automatically. Opening app...`);
-            const smsLink = `sms:${targetPhoneNumber}?body=${encodeURIComponent(command)}`;
-            window.open(smsLink, '_self');
-          }
-        );
-      };
 
-      window.sms.hasPermission(
-        (hasPermission) => {
-          if (hasPermission) {
-            send();
-          } else {
-            send();
-          }
-        },
-        (err) => {
-          send();
-        }
-      );
+    if (DANGEROUS_COMMANDS.has(cmd)) {
+      const confirmed = await confirmDangerous(cmd, desc);
+      if (!confirmed) return;
+    }
+
+    haptic(ImpactStyle.Medium);
+    const toastId = toast.loading(`Sending ${cmd}…`);
+    const reply   = await send(cmd);
+    toast.dismiss(toastId);
+
+    if (reply.startsWith('❌')) {
+      toast.error(reply);
     } else {
-      const smsLink = `sms:${targetPhoneNumber}?body=${encodeURIComponent(command)}`;
-      window.open(smsLink, '_self');
-      toast.success(`Preparing to send: ${command}`, {
-        description: description
+      toast.success(reply.length > 80 ? reply.slice(0, 80) + '…' : reply, {
+        description: desc,
       });
     }
   };
 
-  // Filter commands based on search
-  const filteredCategories = SMS_COMMANDS.map(cat => ({
-    ...cat,
-    commands: cat.commands.filter(c => 
-      c.cmd.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      c.desc.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-  })).filter(cat => cat.commands.length > 0);
+  // Biometric / confirm gate for dangerous commands
+  const confirmDangerous = (cmd: string, label: string): Promise<boolean> =>
+    new Promise(resolve => {
+      haptic(ImpactStyle.Heavy);
+      if (window.Fingerprint) {
+        window.Fingerprint.isAvailable(
+          () => window.Fingerprint!.show(
+            { title: 'Authentication Required', subtitle: `Authorize: ${label}`, disableBackup: true },
+            () => resolve(true),
+            () => { toast.error('Authentication failed'); resolve(false); }
+          ),
+          () => resolve(confirm(`Are you sure you want to ${label}?`))
+        );
+      } else {
+        resolve(confirm(`Are you sure you want to ${label}?`));
+      }
+    });
 
-  if (!targetPhoneNumber) {
+  // ── Command search filter ────────────────────────────────────────
+  const filteredCategories = useMemo(() => {
+    const q = searchQuery.toLowerCase();
+    return SMS_COMMANDS.map(cat => ({
+      ...cat,
+      title:    formatTitle(cat.title),
+      commands: q
+        ? cat.commands.filter(c =>
+            c.cmd.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q))
+        : cat.commands,
+    })).filter(cat => cat.commands.length > 0);
+  }, [searchQuery]);
+
+  // ── Connect screen (startup wizard) ─────────────────────────────
+  if (!deviceId) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-6">
-        <div className="bg-card p-8 rounded-[20px] shadow-sm w-full max-w-md text-center border border-border">
-          <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
-            <User className="w-10 h-10 text-muted-foreground" />
-          </div>
-          <h2 className="text-2xl font-bold mb-2 tracking-tight text-foreground">Welcome</h2>
-          <p className="text-muted-foreground mb-8">Enter the Elder's phone number to get started.</p>
-          
-          <div className="space-y-4">
-            <Input 
-              placeholder="+1234567890" 
-              value={phoneInput}
-              onChange={(e) => setPhoneInput(e.target.value)}
-              className="text-center text-lg h-12 rounded-xl bg-muted border-border"
-              type="tel"
-            />
-            <Button onClick={handleConnect} className="w-full h-12 rounded-xl bg-[#007AFF] hover:bg-[#0069D9] text-lg font-semibold text-white">
-              Continue
-            </Button>
-          </div>
-        </div>
-      </div>
+      <ConnectWizard
+        onComplete={(id, profile) => {
+          localStorage.setItem('elder_device_id', id);
+          localStorage.setItem('caretaker_role', profile.role);
+          localStorage.setItem('caretaker_name', profile.name);
+          setRole(profile.role);
+          setName(profile.name);
+          setDeviceId(id);
+        }}
+      />
     );
   }
 
+  // ── Main dashboard ───────────────────────────────────────────────
   return (
-    <div className="h-screen bg-background overflow-hidden flex flex-col font-sans">
-      {/* iOS Header - Sticky & Glassmorphic */}
-      <div className="sticky top-0 z-50 pt-safe bg-background/70 backdrop-blur-2xl border-b border-border supports-[backdrop-filter]:bg-background/60 transition-all duration-200">
-        <div className="px-4 pb-2 flex items-center justify-between pt-2">
-          <motion.h1 
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="text-[34px] font-bold tracking-tight text-foreground"
-          >
-            HomeSync<span className="text-[#FFCC00]">.</span>
-          </motion.h1>
-          
+    <div className="h-screen bg-background overflow-hidden flex flex-col font-sans relative">
+
+      {/* Header */}
+      <div className={cn(
+        "shrink-0 px-4 pt-safe pb-3 flex items-center justify-between z-30 transition-colors duration-200",
+        scrolled
+          ? "bg-background/95 backdrop-blur-md shadow-sm border-b border-border"
+          : "bg-background/70 backdrop-blur-md border-b border-transparent"
+      )}>
+        <h1 className="text-[28px] font-bold tracking-tight text-foreground">
+          <span className="text-[#FF9933]">Home</span>Sync
+          <span className="text-[#138808]">.</span>
+        </h1>
+
+        <div className="flex items-center gap-2">
+          {/* Live command status indicator */}
+          {cmdStatus === 'sending' || cmdStatus === 'waiting' ? (
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+          ) : cmdStatus === 'done' ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+          ) : null}
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button 
+              <button
                 onClick={() => haptic(ImpactStyle.Medium)}
-                className="w-9 h-9 rounded-full bg-muted flex items-center justify-center text-[#007AFF] active:opacity-70 transition-opacity backdrop-blur-sm"
+                className="w-9 h-9 rounded-full bg-muted flex items-center justify-center active:opacity-70"
               >
                 <Settings className="w-5 h-5" />
               </button>
@@ -331,203 +270,317 @@ export function CaretakerDashboard() {
             <DropdownMenuContent align="end" className="w-56 rounded-xl">
               <DropdownMenuLabel>Settings</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => {
-                router.push('/settings');
-              }}>
+              <DropdownMenuItem onClick={() => router.push('/settings')}>
                 <Settings className="mr-2 h-4 w-4" /> App Settings
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => {
-                if (targetPhoneNumber) {
-                  navigator.clipboard.writeText(targetPhoneNumber);
-                  toast.success("Number Copied");
-                }
+                navigator.clipboard.writeText(deviceId);
+                toast.success('Device ID copied');
               }}>
-                Copy Number
+                Copy Device ID
               </DropdownMenuItem>
-              <DropdownMenuItem className="text-red-600" onClick={() => savePhoneNumber('')}>
-                <LogOut className="mr-2 h-4 w-4" /> Change Number
+              <DropdownMenuItem className="text-red-600" onClick={() => saveDeviceId('')}>
+                <LogOut className="mr-2 h-4 w-4" /> Disconnect
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-
-        {/* Search Bar - Removed */}
-
       </div>
 
-      {/* Main Scroll Area */}
-      <div 
+      {/* Scroll area */}
+      <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 pb-[120px] pt-4 space-y-6"
+        className="flex-1 overflow-y-auto overflow-x-hidden px-4 pb-[140px] pt-4 overscroll-contain"
       >
-        {/* Quick Actions - Slide to Send */}
-        {!searchQuery && (
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-3"
-          >
-            <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-4">Critical Actions</h2>
-            <div className="space-y-3">
-              <SlideButton 
-                label="Slide to SOS" 
-                onSuccess={() => sendSMS("SOS", "Emergency SOS")}
-                color="bg-[#FF3B30]"
-                icon={<Shield className="w-6 h-6 text-white" />}
-              />
-              <SlideButton 
-                label="Slide to Locate" 
-                onSuccess={() => sendSMS("LOC", "Locating Device")}
-                color="bg-[#007AFF]"
-                icon={<MapPin className="w-6 h-6 text-white" />}
-              />
-            </div>
+        <AnimatePresence mode="wait" initial={false}>
 
-            {/* 9-Grid Quick Center */}
-            <div>
-              <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-4 mb-3">Quick Center</h2>
-              <div className="grid grid-cols-3 gap-3">
-                {IMPORTANT_COMMANDS.map((cmd, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => sendSMS(cmd.cmd, cmd.label)}
-                    className="aspect-square bg-card rounded-2xl flex flex-col items-center justify-center gap-2 shadow-sm active:scale-95 transition-transform border border-border"
-                  >
-                    <div className={`w-10 h-10 rounded-full ${cmd.color} flex items-center justify-center text-white`}>
-                      {cmd.icon}
+          {/* ── Home tab ── */}
+          {tab === 'home' ? (
+            <motion.div key="home"
+              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              {/* Device card */}
+              <div className="bg-card rounded-[24px] p-5 border border-border shadow-sm mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-full bg-primary/10 flex items-center justify-center">
+                    <Smartphone className="w-5 h-5 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[15px] font-semibold">
+                      {(role || name) ? [role, name].filter(Boolean).join(' · ') : 'Connected device'}
                     </div>
-                    <span className="text-[13px] font-medium text-foreground">{cmd.label}</span>
-                  </button>
-                ))}
+                    <div className="text-[13px] text-muted-foreground font-mono">{deviceId}</div>
+                    {deviceStatus && (
+                      <div className="text-[11px] text-muted-foreground mt-0.5">
+                        🔋 {deviceStatus.battery ?? '–'}%
+                        {deviceStatus.charging ? ' ⚡' : ''}
+                        {' · '}Last seen {new Date(deviceStatus.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    )}
+                  </div>
+                  <div className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-full",
+                    connected ? "bg-emerald-500/10" : "bg-amber-500/10"
+                  )}>
+                    <span className={cn(
+                      "w-2 h-2 rounded-full",
+                      connected ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
+                    )} />
+                    <span className={cn(
+                      "text-[12px] font-semibold",
+                      connected ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600"
+                    )}>
+                      {connected ? 'ONLINE' : 'AWAY'}
+                    </span>
+                  </div>
+                </div>
               </div>
-            </div>
 
-            {/* High Level Commands */}
-            <div>
-              <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-4 mb-3">High Level Actions</h2>
-              <div className="grid grid-cols-2 gap-3">
-                {HIGH_LEVEL_COMMANDS.map((cmd, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleHighLevelCommand(cmd.cmd, cmd.label)}
-                    className="h-14 bg-card rounded-2xl flex items-center px-4 gap-3 shadow-sm active:scale-95 transition-transform border border-border"
-                  >
-                    <div className={`w-8 h-8 rounded-full ${cmd.color} flex items-center justify-center text-white`}>
-                      {cmd.icon}
+              {/* Wearable vitals + health-event simulation */}
+              <VitalsCard
+                vitals={health.vitals}
+                detected={health.detection}
+                scenarios={SCENARIOS}
+                connected={connected}
+                onSimulate={handleSimulate}
+              />
+
+              {/* Primary actions */}
+              <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-1 mb-3">
+                Primary Actions
+              </h2>
+              <div className="space-y-3 mb-6">
+                <SlideButton
+                  label="Slide to SOS"
+                  onSuccess={() => runCommand("SOS", "Emergency SOS")}
+                  color="bg-[#FF3B30]"
+                  icon={<Shield className="w-6 h-6 text-white" />}
+                />
+                <SlideButton
+                  label="Slide to Locate"
+                  onSuccess={() => runCommand("LOC", "Locating Device")}
+                  color="bg-[#0A84FF]"
+                  icon={<MapPin className="w-6 h-6 text-white" />}
+                />
+              </div>
+
+              {/* Quick actions */}
+              <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-1 mb-3">
+                Quick Actions
+              </h2>
+              <div className="grid grid-cols-2 gap-3 mb-6">
+                <QuickTile icon={<Phone      className="w-5 h-5" />} label="Call"       color="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" onClick={() => runCommand("CALLME",   "Call device")} />
+                <QuickTile icon={<Bell       className="w-5 h-5" />} label="Ring"       color="bg-blue-500/10 text-blue-500"    onClick={() => runCommand("RING",     "Ring device")} />
+                <QuickTile icon={<Zap        className="w-5 h-5" />} label="Flashlight" color="bg-amber-500/10 text-amber-500"  onClick={() => runCommand("TORCHON",  "Flashlight ON")} />
+                <QuickTile icon={<MessageSquare className="w-5 h-5" />} label="Check-in" color="bg-teal-500/10 text-teal-600 dark:text-teal-400" onClick={() => runCommand("CHECKIN", "Check-in")} />
+              </div>
+
+              {/* Utility row */}
+              <div className="flex gap-3 mb-6">
+                <button
+                  onClick={() => runCommand("MEDR", "Send medicine reminder")}
+                  className="flex-1 h-12 rounded-2xl bg-card border border-border shadow-sm flex items-center justify-center gap-2 text-[15px] font-medium active:scale-[0.98] transition-transform"
+                >
+                  <Pill className="w-4 h-4 text-rose-500" /> Meds
+                </button>
+                <button
+                  onClick={() => runCommand("BATNOW", "Battery level")}
+                  className="flex-1 h-12 rounded-2xl bg-card border border-border shadow-sm flex items-center justify-center gap-2 text-[15px] font-medium active:scale-[0.98] transition-transform"
+                >
+                  <BatteryLow className="w-4 h-4 text-amber-500" /> Battery
+                </button>
+                <button
+                  onClick={() => runCommand("PING", "Check device is reachable")}
+                  className="flex-1 h-12 rounded-2xl bg-card border border-border shadow-sm flex items-center justify-center gap-2 text-[15px] font-medium text-cyan-600 dark:text-cyan-400 active:scale-[0.98] transition-transform"
+                >
+                  <Wifi className="w-4 h-4" /> Ping
+                </button>
+              </div>
+
+              {/* Command history (from Firebase) */}
+              <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-1 mb-3">
+                Recent
+              </h2>
+              {history.length === 0 ? (
+                <div className="bg-card/50 rounded-2xl border border-dashed border-border p-6 text-center">
+                  <Clock className="w-5 h-5 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">Commands you send will appear here.</p>
+                </div>
+              ) : (
+                <div className="bg-card rounded-2xl border border-border shadow-sm divide-y divide-border overflow-hidden">
+                  {history.map((h, i) => (
+                    <div key={i} className="flex items-center gap-3 px-4 py-3">
+                      <div className={cn(
+                        "w-9 h-9 rounded-full flex items-center justify-center shrink-0",
+                        h.ok ? "bg-primary/10" : "bg-red-500/10"
+                      )}>
+                        {h.ok
+                          ? <Send className="w-4 h-4 text-primary" />
+                          : <X    className="w-4 h-4 text-red-500" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[15px] font-semibold">{h.cmd}</div>
+                        <div className="text-[12px] text-muted-foreground truncate">{h.reply}</div>
+                      </div>
+                      <div className="text-[12px] text-muted-foreground font-mono shrink-0">
+                        {h.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
                     </div>
-                    <span className="text-[15px] font-medium text-foreground">{cmd.label}</span>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+
+          ) : (
+            /* ── Commands tab ── */
+            <motion.div key="commands"
+              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              {/* Search */}
+              <div className="relative mb-4">
+                <Search className="w-[18px] h-[18px] text-muted-foreground absolute left-4 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => { setSearchQuery(e.target.value); setActiveCategory(null); }}
+                  placeholder="Search commands…"
+                  className="w-full h-12 bg-card rounded-2xl border border-border pl-11 pr-10 text-[15px] focus:outline-none focus:border-primary/50 shadow-sm"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-muted flex items-center justify-center">
+                    <X className="w-3.5 h-3.5" />
                   </button>
-                ))}
-              </div>
-            </div>
-          </motion.div>
-        )}
-
-        {/* Categories List */}
-        <div className="space-y-6 pb-8">
-          {filteredCategories.map((category, index) => {
-            const style = getCategoryStyle(category.title);
-            const isOpen = activeCategory === category.title || searchQuery.length > 0;
-
-            return (
-              <motion.div 
-                key={index}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.05 }}
-              >
-                {!searchQuery && (
-                  <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-4 mb-2">
-                    {category.title.replace(/^\d+\.\s*/, '')}
-                  </h2>
                 )}
-                
-                <div className="bg-card rounded-[10px] overflow-hidden shadow-sm border border-border">
-                  {/* Category Header (only if not searching, acts as toggle) */}
-                  {!searchQuery && (
-                    <button 
-                      onClick={() => {
-                        selectionHaptic();
-                        setActiveCategory(activeCategory === category.title ? null : category.title);
-                      }}
-                      className="w-full flex items-center justify-between p-3 active:bg-muted transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-7 h-7 rounded-[6px] ${style.color} flex items-center justify-center`}>
+              </div>
+
+              {/* Category accordions */}
+              <div className="space-y-3">
+                {filteredCategories.map((category, index) => {
+                  const style  = getCategoryStyle(category.title);
+                  const isOpen = activeCategory === category.title || searchQuery.length > 0;
+                  return (
+                    <div key={index} className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
+                      <button
+                        onClick={() => { selectionHaptic(); setActiveCategory(isOpen && !searchQuery ? null : category.title); }}
+                        className="w-full flex items-center gap-3 p-3.5 active:bg-muted transition-colors"
+                      >
+                        <div className={cn("w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0", style.chip)}>
                           {style.icon}
                         </div>
-                        <span className="font-medium text-[17px] text-foreground">{category.title.replace(/^\d+\s*\.\s*/, '')}</span>
-                      </div>
-                      <ChevronRight className={`w-5 h-5 text-muted-foreground transition-transform duration-300 ${isOpen ? 'rotate-90' : ''}`} />
-                    </button>
-                  )}
+                        <div className="flex-1 min-w-0 text-left">
+                          <div className="font-medium text-[15px]">{category.title}</div>
+                          <div className="text-[12px] text-muted-foreground">
+                            {category.commands.length} {category.commands.length === 1 ? 'command' : 'commands'}
+                          </div>
+                        </div>
+                        <ChevronRight className={cn(
+                          "w-5 h-5 text-muted-foreground transition-transform duration-300 shrink-0",
+                          isOpen && !searchQuery && "rotate-90"
+                        )} />
+                      </button>
 
-                  {/* Commands List */}
-                  <AnimatePresence>
-                    {isOpen && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="divide-y divide-border border-t border-border"
-                      >
-                        {category.commands.map((cmd, cmdIndex) => (
-                          <button
-                            key={cmdIndex}
-                            onClick={() => sendSMS(cmd.cmd, cmd.desc)}
-                            className="w-full flex items-center justify-between p-4 pl-12 hover:bg-muted active:bg-muted/80 transition-colors group"
+                      <AnimatePresence initial={false}>
+                        {isOpen && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.22, ease: 'easeOut' }}
+                            className="divide-y divide-border border-t border-border"
                           >
-                            <div className="text-left">
-                              <span className="block font-medium text-[17px] text-foreground">
-                                {cmd.cmd}
-                              </span>
-                              <span className="text-[13px] text-muted-foreground">
-                                {cmd.desc}
-                              </span>
-                            </div>
-                            <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-[#007AFF] opacity-0 group-hover:opacity-100 transition-opacity">
-                              <Send className="w-4 h-4" />
-                            </div>
-                          </button>
-                        ))}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </motion.div>
-            );
-          })}
+                            {category.commands.map((cmd, ci) => {
+                              const supported = IMPLEMENTED_COMMANDS.has(cmd.cmd);
+                              return (
+                              <button
+                                key={ci}
+                                onClick={() => runCommand(cmd.cmd, cmd.desc)}
+                                disabled={cmdStatus === 'sending' || cmdStatus === 'waiting' || !supported}
+                                className="w-full flex items-center justify-between p-4 pl-11 active:bg-muted transition-colors group text-left disabled:opacity-40"
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-medium text-[15px]">{cmd.cmd}</div>
+                                  <div className="text-[13px] text-muted-foreground truncate">
+                                    {cmd.desc}{!supported && ' · not available yet'}
+                                  </div>
+                                </div>
+                                <div className={cn(
+                                  "w-7 h-7 rounded-full flex items-center justify-center shrink-0 ml-3",
+                                  DANGEROUS_COMMANDS.has(cmd.cmd)
+                                    ? "bg-red-500/10 text-red-500"
+                                    : supported
+                                      ? "bg-muted text-primary opacity-0 group-active:opacity-100"
+                                      : "bg-muted text-muted-foreground"
+                                )}>
+                                  {DANGEROUS_COMMANDS.has(cmd.cmd)
+                                    ? <Lock className="w-3.5 h-3.5" />
+                                    : supported
+                                      ? <Send className="w-3.5 h-3.5" />
+                                      : <X className="w-3.5 h-3.5" />}
+                                </div>
+                              </button>
+                              );
+                            })}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  );
+                })}
+                {filteredCategories.length === 0 && (
+                  <div className="bg-card/50 rounded-2xl border border-dashed border-border p-6 text-center">
+                    <p className="text-sm text-muted-foreground">No commands match "{searchQuery}".</p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Bottom tab bar */}
+      <div className="absolute bottom-0 inset-x-0 z-40 px-4 pb-4 pt-2 pointer-events-none">
+        <div className="pointer-events-auto flex rounded-[24px] bg-card/90 backdrop-blur-xl border border-border shadow-[0_8px_32px_rgba(0,0,0,0.12)] p-1.5 pb-safe">
+          <TabButton active={tab === 'home'}     icon={<Home    className="w-5 h-5" />} label="Home"     onClick={() => switchTab('home')} />
+          <TabButton active={tab === 'commands'} icon={<Command className="w-5 h-5" />} label="Commands" onClick={() => switchTab('commands')} />
         </div>
       </div>
 
-      {/* Floating Bottom Search Bar */}
-      <div className="absolute bottom-8 left-4 right-4 z-50">
-        <div className="relative group shadow-[0_8px_32px_rgba(0,0,0,0.12)] rounded-full">
-          <div className="absolute inset-0 bg-card/20 backdrop-blur-2xl rounded-full border border-border/30" />
-          <div className="relative flex items-center px-4 h-[56px]">
-            <Search className="w-5 h-5 text-muted-foreground mr-3" />
-            <input 
-              type="text"
-              placeholder="Search commands..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 bg-transparent border-none text-[17px] text-foreground placeholder:text-muted-foreground focus:ring-0 outline-none h-full"
-            />
-            {searchQuery && (
-              <button 
-                onClick={() => {
-                  haptic(ImpactStyle.Medium);
-                  setSearchQuery('');
-                }}
-                className="p-1 rounded-full bg-muted text-muted-foreground"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* Loud full-screen health alarm */}
+      <HeartAlertOverlay alert={health.activeCritical} onAcknowledge={() => health.acknowledgeAll()} />
     </div>
   );
 }
 
+// ── Sub-components ─────────────────────────────────────────────────────────────
+
+function TabButton({ active, icon, label, onClick }: {
+  active: boolean; icon: React.ReactNode; label: string; onClick: () => void;
+}) {
+  return (
+    <button onClick={onClick} className={cn(
+      "flex-1 flex flex-col items-center gap-1 py-2 rounded-[16px] transition-colors duration-200 active:opacity-80",
+      active ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+    )}>
+      {icon}
+      <span className="text-[11px] font-medium">{label}</span>
+    </button>
+  );
+}
+
+function QuickTile({ icon, label, color, onClick }: {
+  icon: React.ReactNode; label: string; color: string; onClick: () => void;
+}) {
+  return (
+    <button onClick={onClick}
+      className="bg-card rounded-2xl border border-border shadow-sm flex flex-col items-center gap-2 py-4 active:scale-[0.97] transition-transform"
+    >
+      <div className={cn("w-10 h-10 rounded-full flex items-center justify-center", color)}>
+        {icon}
+      </div>
+      <span className="text-[13px] font-medium">{label}</span>
+    </button>
+  );
+}

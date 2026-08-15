@@ -22,7 +22,11 @@ export default function SettingsPage() {
 
   const handleBack = () => {
     haptic(ImpactStyle.Heavy);
-    router.back();
+    if (window.history.length > 1) {
+      router.back();
+    } else {
+      router.push("/");
+    }
   };
 
   const handleThemeChange = (newTheme: string) => {

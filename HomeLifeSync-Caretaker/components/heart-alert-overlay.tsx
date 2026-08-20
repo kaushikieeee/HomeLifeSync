@@ -143,7 +143,7 @@ export function HeartAlertOverlay({ alert, onAcknowledge }: Props) {
 
               <button
                 onClick={onAcknowledge}
-                className="w-full h-13 py-3.5 rounded-2xl bg-white text-red-700 font-bold text-[16px] active:scale-[0.98] transition-transform shadow-lg"
+                className="w-full h-13 py-3.5 rounded-2xl bg-white text-red-700 font-bold text-[16px] active:scale-[0.98] transition-all duration-150 cursor-pointer shadow-lg hover:bg-white/90 hover:shadow-xl"
               >
                 ACKNOWLEDGE
               </button>

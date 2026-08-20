@@ -79,4 +79,10 @@ public class SafetyHandler {
             alarmPlayer = null;
         }
     }
+
+    /** Service teardown — stop any ringing SOS alarm. */
+    public void stopSounds() {
+        sosActive = false;
+        mainHandler.post(this::stopAlarm);
+    }
 }

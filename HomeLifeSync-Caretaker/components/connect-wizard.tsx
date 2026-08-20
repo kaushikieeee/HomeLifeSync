@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { HeartHandshake, UserCircle, Smartphone, CheckCircle2, ArrowRight, ArrowLeft } from 'lucide-react';
+import { HeartHandshake, UserCircle, Smartphone, CheckCircle2, ArrowRight, ArrowLeft, Baby, Heart, Stethoscope, User } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from '@/lib/utils';
@@ -13,11 +13,11 @@ export type CaretakerProfile = {
 };
 
 const ROLES = [
-  { id: 'child',     label: 'Child',       emoji: '🧒' },
-  { id: 'grandchild', label: 'Grandchild', emoji: '👶' },
-  { id: 'caregiver', label: 'Caregiver',   emoji: '🤝' },
-  { id: 'nurse',     label: 'Nurse',       emoji: '🩺' },
-  { id: 'other',     label: 'Other',       emoji: '👤' },
+  { id: 'child',      label: 'Child',      icon: <Baby className="w-5 h-5" /> },
+  { id: 'grandchild', label: 'Grandchild', icon: <Heart className="w-5 h-5" /> },
+  { id: 'caregiver',  label: 'Caregiver',  icon: <HeartHandshake className="w-5 h-5" /> },
+  { id: 'nurse',      label: 'Nurse',      icon: <Stethoscope className="w-5 h-5" /> },
+  { id: 'other',      label: 'Other',      icon: <User className="w-5 h-5" /> },
 ];
 
 type Props = {
@@ -31,6 +31,8 @@ const STEPS = [
   { key: 'done',     icon: <CheckCircle2 className="w-5 h-5" />, title: 'All set' },
 ];
 
+const DEVICE_ID_RE = /^[0-9a-fA-F]{8}$/;
+
 export function ConnectWizard({ onComplete }: Props) {
   const [step,      setStep]      = useState(0);
   const [role,      setRole]      = useState('');
@@ -38,8 +40,10 @@ export function ConnectWizard({ onComplete }: Props) {
   const [deviceId,  setDeviceId]  = useState('');
   const [saving,    setSaving]    = useState(false);
 
+  const deviceOk = DEVICE_ID_RE.test(deviceId.trim());
+
   const canNext = step === 0 || step === 3 ||
-    (step === 1 && role !== '') || (step === 2 && deviceId.trim().length >= 4);
+    (step === 1 && role !== '') || (step === 2 && deviceOk);
 
   const next = () => setStep(s => Math.min(s + 1, STEPS.length - 1));
   const back = () => setStep(s => Math.max(s - 1, 0));
@@ -115,13 +119,13 @@ export function ConnectWizard({ onComplete }: Props) {
                         key={r.id}
                         onClick={() => setRole(r.label)}
                         className={cn(
-                          "h-16 rounded-xl border flex flex-col items-center justify-center gap-1 text-[13px] font-medium active:scale-[0.97] transition-all",
+                          "h-16 rounded-xl border flex flex-col items-center justify-center gap-1 text-[13px] font-medium active:scale-[0.97] transition-all duration-150 cursor-pointer",
                           role === r.label
-                            ? "border-primary bg-primary/10 text-foreground"
-                            : "border-border bg-muted/30 text-muted-foreground hover:bg-muted"
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border bg-muted/30 text-muted-foreground hover:bg-muted hover:border-primary/30"
                         )}
                       >
-                        <span className="text-lg">{r.emoji}</span>
+                        <span className={cn(role === r.label && "text-primary", role !== r.label && "text-muted-foreground")}>{r.icon}</span>
                         {r.label}
                       </button>
                     ))}
@@ -147,9 +151,17 @@ export function ConnectWizard({ onComplete }: Props) {
                     placeholder="e.g. a1b2c3d4"
                     value={deviceId}
                     onChange={e => setDeviceId(e.target.value)}
-                    className="text-center text-lg h-14 rounded-xl font-mono tracking-widest"
+                    className={cn(
+                      "text-center text-lg h-14 rounded-xl font-mono tracking-widest",
+                      deviceId.trim() && !deviceOk && "border-red-400 text-red-500 focus-visible:ring-red-400"
+                    )}
                     autoFocus={step === 2}
                   />
+                  {deviceId.trim() && !deviceOk && (
+                    <p className="text-[11px] text-red-500 mt-2 text-center">
+                      Device ID must be exactly 8 characters (letters a-f and numbers 0-9). Check for typos like an extra digit.
+                    </p>
+                  )}
                   <p className="text-[11px] text-muted-foreground mt-2 text-center">
                     Commands are sent over Firebase — free and instant. No pairing codes, no phone number needed.
                   </p>

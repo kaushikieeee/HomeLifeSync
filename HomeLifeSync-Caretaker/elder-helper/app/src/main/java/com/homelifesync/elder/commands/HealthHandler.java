@@ -46,11 +46,19 @@ public class HealthHandler {
 
     private static HealthHandler instance;
 
+    // ── Wearable history (HR NOW / AVG / PEAK / LOW / TREND) ──────────
+    // Rolling buffer shared across all owners. Filled every tick → supports
+    // HRNOW, HRAVG, HRPEAK, HRLOW and a short HRTREND without a real band.
+    private static final int    HISTORY_CAP   = 256;
+    private static final double[] hrHistory   = new double[HISTORY_CAP];
+    private static       int    hrHistoryN    = 0;
+
     private final Context context;
     private final Handler  main          = new Handler(Looper.getMainLooper());
     private final Handler  ticker        = new Handler(Looper.getMainLooper());
     private final Random   rng           = new Random();
     private       boolean  ticking       = false;
+    private       int      owners        = 0;
     private       MediaPlayer alarmPlayer;
 
     // Active scenario targets + heart-rate variability (for arrhythmia looks)
@@ -94,7 +102,13 @@ public class HealthHandler {
         return instance;
     }
 
+    /**
+     * Each owner (MainActivity + ElderHelperService) calls start()/stop().
+     * The ticker stays alive while at least one owner is around, so stopping
+     * the dashboard never kills the service's vitals stream and vice-versa.
+     */
     public synchronized void start() {
+        owners++;
         if (ticking) return;
         ticking = true;
         ticker.removeCallbacks(tick);
@@ -102,8 +116,11 @@ public class HealthHandler {
     }
 
     public synchronized void stop() {
+        owners = Math.max(0, owners - 1);
+        if (owners > 0 || !ticking) return;
         ticking = false;
         ticker.removeCallbacks(tick);
+        stopAlarm();
     }
 
     // ── Accessors (UI) ──────────────────────────────────────────────
@@ -117,6 +134,67 @@ public class HealthHandler {
     public static int     getGlucose()   { return (int) Math.round(currentGlucose); }
     public static String  getCondition() { return currentCondition; }
     public static String  getSeverity()  { return currentSeverity; }
+
+    // ── Wearable HR queries (HRNOW, HRAVG, HRPEAK, HRLOW, HRTREND) ────
+
+    /** HRNOW — current reading from the wearable stream. */
+    public static String hrNow() {
+        return "❤️ HR now: " + getHr() + " bpm"
+            + " (SpO₂ " + (int) Math.round(currentSpo2) + "%)"
+            + ("OK".equals(currentSeverity) ? "" : " · state: " + currentCondition);
+    }
+
+    /** HRAVG — average over the buffered sample window. */
+    public static String hrAvg() {
+        double[] w = window();
+        if (w.length == 0) return "❌ No HR samples yet.";
+        double sum = 0; for (double v : w) sum += v;
+        return "📈 Avg HR (" + w.length + " samples): "
+            + Math.round(sum / w.length) + " bpm";
+    }
+
+    /** HRPEAK — highest reading in the buffer (+ rough time). */
+    public static String hrPeak() {
+        double[] w = window();
+        if (w.length == 0) return "❌ No HR samples yet.";
+        double peak = w[0]; for (double v : w) if (v > peak) peak = v;
+        return "⛰️ HR peak (window): " + Math.round(peak) + " bpm";
+    }
+
+    /** HRLOW — lowest reading in the buffer. */
+    public static String hrLow() {
+        double[] w = window();
+        if (w.length == 0) return "❌ No HR samples yet.";
+        double low = w[0]; for (double v : w) if (v < low) low = v;
+        return "🍃 HR low (window): " + Math.round(low) + " bpm";
+    }
+
+    /** HRTREND — last 8 readings + direction (up/down/stable). */
+    public static String hrTrend() {
+        double[] w = window();
+        if (w.length < 2) return "❌ Not enough HR history yet.";
+        StringBuilder sb = new StringBuilder("🔀 HR trend (recent):\n");
+        int start = Math.max(0, w.length - 8);
+        double first = 0, last = 0;
+        for (int i = start; i < w.length; i++) {
+            sb.append(Math.round(w[i])).append(" bpm");
+            if (i < w.length - 1) sb.append(" → ");
+            if (i == start) last = w[i];
+            first = w[i];
+        }
+        double d = first - last;
+        sb.append("\nDirection: ")
+          .append(d > 4 ? "Rising 📈" : d < -4 ? "Falling 📉" : "Stable ➡️");
+        return sb.toString();
+    }
+
+    private static double[] window() {
+        int n = Math.min(hrHistoryN, HISTORY_CAP);
+        double[] out = new double[n];
+        int off = Math.max(0, hrHistoryN - n);
+        for (int i = 0; i < n; i++) out[i] = hrHistory[(off + i) % HISTORY_CAP];
+        return out;
+    }
 
     /**
      * Simulate a condition. command is one of the 15 scenarios in
@@ -132,9 +210,13 @@ public class HealthHandler {
         stepVitals();
         pushStatus();
 
-        boolean critical = !"OK".equals(currentSeverity);
-        if (critical) {
-            raiseAlert();
+        // CRITICAL → full-screen alert + looping alarm.
+        // WARNING → notification only, no siren.
+        // OK     → clear any started alert/alarm.
+        if ("CRITICAL".equals(currentSeverity)) {
+            raiseAlert(true);
+        } else if ("WARNING".equals(currentSeverity)) {
+            raiseAlert(false);
         } else {
             stopAlarm();
             NotificationHelper.cancelMedicalAlert(context);
@@ -172,6 +254,7 @@ public class HealthHandler {
 
         currentCondition = s.condition;
         currentSeverity  = s.severity;
+        BehaviorHandler.appendHealthEvent(context, s.condition, s.severity);
         currentHr      = targetHr      = s.hr;
         currentSpo2    = targetSpo2    = s.spo2;
         currentTemp    = targetTemp    = s.temp;
@@ -192,6 +275,12 @@ public class HealthHandler {
         currentSys     = walk(currentSys,     targetSys,     4);
         currentDia     = walk(currentDia,     targetDia,     3);
         currentGlucose = walk(currentGlucose, targetGlucose, 4);
+        recordHr(currentHr);
+    }
+
+    private static void recordHr(double hr) {
+        hrHistory[hrHistoryN % HISTORY_CAP] = hr;
+        hrHistoryN++;
     }
 
     private double walk(double cur, double tg, double spread) {
@@ -220,7 +309,7 @@ public class HealthHandler {
         FirebaseRepository.get(context).updateStatus(m);
     }
 
-    private void raiseAlert() {
+    private void raiseAlert(boolean alarming) {
         String summary = "HR " + getHr()
             + " · SpO₂ " + (int) Math.round(currentSpo2) + "%"
             + " · " + String.format(Locale.US, "%.1f", currentTemp) + "°C"
@@ -230,25 +319,27 @@ public class HealthHandler {
 
         NotificationHelper.showMedicalAlert(context, currentCondition, currentSeverity, summary);
 
-        main.post(() -> {
-            try {
-                stopAlarm();
-                AudioManager am =
-                    (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-                am.setStreamVolume(AudioManager.STREAM_ALARM,
-                    am.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0);
-                Uri uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
-                alarmPlayer = MediaPlayer.create(context, uri);
-                if (alarmPlayer != null) {
-                    alarmPlayer.setLooping(true);
-                    alarmPlayer.start();
-                    main.removeCallbacks(stopAlarmRunnable);
-                    main.postDelayed(stopAlarmRunnable, ALARM_MS);
+        if (alarming) {
+            main.post(() -> {
+                try {
+                    stopAlarm();
+                    AudioManager am =
+                        (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+                    am.setStreamVolume(AudioManager.STREAM_ALARM,
+                        am.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0);
+                    Uri uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+                    alarmPlayer = MediaPlayer.create(context, uri);
+                    if (alarmPlayer != null) {
+                        alarmPlayer.setLooping(true);
+                        alarmPlayer.start();
+                        main.removeCallbacks(stopAlarmRunnable);
+                        main.postDelayed(stopAlarmRunnable, ALARM_MS);
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Alarm error", e);
                 }
-            } catch (Exception e) {
-                Log.e(TAG, "Alarm error", e);
-            }
-        });
+            });
+        }
 
         Map<String, Object> vitals = new java.util.HashMap<>();
         vitals.put("hr",              currentHr);

@@ -53,4 +53,13 @@ public class PrefsHelper {
     public void setOnboarded() {
         prefs.edit().putBoolean(Constants.PREF_ONBOARDED, true).apply();
     }
+
+    /** Persisted flashlight/torch state — survives restarts (state memory). */
+    public boolean getTorchState() {
+        return prefs.getBoolean(Constants.PREF_TORCH, false);
+    }
+
+    public void setTorchState(boolean on) {
+        prefs.edit().putBoolean(Constants.PREF_TORCH, on).apply();
+    }
 }

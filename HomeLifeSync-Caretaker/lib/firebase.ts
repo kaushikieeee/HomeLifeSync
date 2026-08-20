@@ -5,13 +5,16 @@
  * 1. Go to https://console.firebase.google.com → New project → "HomeLifeSync"
  * 2. Add a Web App → copy the firebaseConfig values below
  * 3. Enable Realtime Database
- * 4. [PROTOTYPE] Realtime Database rules are OPEN so the caretaker, tablet and
- *    elder apps can sync WITHOUT any authentication. Paste (Firebase console →
- *    Realtime Database → Rules → Publish) exactly:
+ * 4. [PROTOTYPE] This repo ships the OPEN rules for sync WITHOUT auth.
+ *    Paste (Firebase console → Realtime Database → Rules → Publish) exactly:
  *    {
  *      "rules": { ".read": true, ".write": true }
  *    }
- *    (The strict auth-required set lives in /firebase-database.rules.json.)
+ *    ⚠️ These are the OPEN prototype rules (see /firebase-database.rules.json).
+ *    Before release they MUST be replaced with auth-gated rules — with the
+ *    open rules anyone who knows the DB URL can read location/health data or
+ *    trigger commands (RING / SOS / a false heart-attack alarm) on the elder's
+ *    phone.
  * 5. Enable Cloud Messaging
  *
  * NOTE: no Firebase Auth is used in this prototype — sync relies entirely on

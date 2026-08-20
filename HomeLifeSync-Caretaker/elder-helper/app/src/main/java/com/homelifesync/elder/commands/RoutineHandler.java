@@ -30,6 +30,9 @@ public class RoutineHandler {
 
     public void reminder(ReplyCallback cb, String message) {
         int id = notifId.incrementAndGet();
+        BehaviorHandler.logReminder(context,
+            message.contains("medicine") ? "MED"
+            : message.contains("Good night") ? "BED" : null);
 
         Intent tap = new Intent(context, MainActivity.class);
         tap.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);

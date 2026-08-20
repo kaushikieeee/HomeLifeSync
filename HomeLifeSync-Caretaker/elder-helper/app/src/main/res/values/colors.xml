@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Brand -->
-    <color name="primary">#0A84FF</color>
-    <color name="primary_dark">#0063CC</color>
-    <color name="accent">#30D158</color>
+    <!-- Brand — calm cyan (accessible, age-friendly) -->
+    <color name="primary">#0891B2</color>
+    <color name="primary_dark">#0E7490</color>
+    <color name="accent">#059669</color>
 
     <!-- Surfaces -->
-    <color name="background">#F2F2F7</color>
+    <color name="background">#ECFEFF</color>
     <color name="surface">#FFFFFF</color>
-    <color name="surface_hint">#CDCDD3</color>
+    <color name="surface_hint">#B7DDE8</color>
 
     <!-- Text -->
-    <color name="text_primary">#1C1C1E</color>
-    <color name="text_secondary">#6C6C70</color>
+    <color name="text_primary">#164E63</color>
+    <color name="text_secondary">#52809B</color>
 
     <!-- Status -->
-    <color name="status_active">#30D158</color>
-    <color name="status_stopped">#FF3B30</color>
+    <color name="status_active">#059669</color>
+    <color name="status_stopped">#DC2626</color>
 
     <!-- Dark theme overrides live in values-night/colors.xml -->
 </resources>

@@ -37,20 +37,40 @@ export const IMPLEMENTED_COMMANDS: ReadonlySet<string> = new Set([
   'HRNORMAL', 'HRMI', 'HRTACHY', 'HRBRADY', 'HRARRHY', 'HRAFIB',
   'HYPOXIA', 'FEVER', 'HYPOTHERMIA', 'BPCRISIS', 'HYPOTENSION',
   'TACHYPNEA', 'BRADYPNEA', 'HYPERGLYCEMIA', 'HYPOGLYCEMIA',
+  // Wearable HR queries
+  'HRNOW', 'HRAVG', 'HRPEAK', 'HRLOW', 'HRTREND',
   // Safety
-  'SOS', 'SOSACK', 'FALLCHECK', 'ACTCHECK',
+  'SOS', 'SOSACK', 'FALLCHECK', 'ACTCHECK', 'NOINACT',
+  // Behaviour awareness / AI flags
+  'BEHAVFLAG', 'NIGHTMOVE', 'INACTALERT', 'WAKEPAT', 'ROUTINECOMPARE',
   // Device controls
   'RING', 'ALRM', 'STOPRING', 'TORCHON', 'TORCHOFF', 'SCREENON',
   'SCREENDIM', 'SCREENMAX', 'VIBRATE', 'MUTE', 'UNMUTE', 'SILENT',
   'VOLMAX', 'VOLLOW',
   // Messaging
   'ACK', 'CHECKIN', 'IOK', 'CALLME', 'AUTOREPLYON', 'AUTOREPLYOFF',
+  // Camera & media
+  'PHOTO', 'PHOTO2', 'PHOTONOWIFI', 'RECORD', 'SNAPVID', 'PLAYMSG',
+  // App interactions
+  'OPENAPP', 'CLOSEAPP', 'OPENMAP', 'OPENCALL', 'OPENMED',
   // Battery / status
-  'BATNOW', 'BATHEALTH', 'CHARGESTATE', 'TEMPNOW', 'STORAGE', 'STATUS',
+  'BATNOW', 'BATHEALTH', 'BATLOW', 'CHARGESTATE', 'TEMPNOW', 'STORAGE', 'STATUS',
   // Connectivity
-  'NETSTATE', 'PING', 'WIFIUP', 'WIFIDOWN',
+  'NETSTATE', 'PING', 'WIFIUP', 'WIFIDOWN', 'DATAON', 'DATAOFF',
+  'HOTSPOTON', 'HOTSPOTOFF',
   // Routine reminders
-  'MEDR', 'WATERREM', 'BEDTIME', 'WAKEUP', 'DAYSTART', 'DAYEND',
+  'MEDR', 'WATERREM', 'BEDTIME', 'WAKEUP', 'DAYSTART', 'DAYEND', 'ROUTINELOG',
+  // Geofencing
+  'GEOSET', 'GEOCLEAR', 'GEOALERT', 'GEOENTER', 'GEOEXIT',
+  // Environment sensors
+  'AMBIENT', 'NOISE', 'SHAKE', 'ORIENT', 'ACCDATA',
+  // Home automation (IoT-ready)
+  'LIVINGLIGHTON', 'LIVINGLIGHTOFF', 'BEDLIGHTON', 'BEDLIGHTOFF',
+  'FANON', 'FANOFF', 'LOCKDOOR', 'UNLOCKDOOR', 'ACSTAT', 'ACLINK',
+  // System control
+  'REBOOT', 'POWEROFF', 'RESTARTTASKER', 'CLEARCACHE',
+  // AI-based behaviour reports
+  'AIWEEK', 'AIPATTERN', 'AIMOOD', 'AIPREDICT', 'AIREMIND',
 ]);
 
 export const SMS_COMMANDS: CommandCategory[] = [

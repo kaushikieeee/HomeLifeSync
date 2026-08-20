@@ -67,7 +67,10 @@ export function useFirebaseDevice(deviceId: string | null) {
       setCmdStatus('done');
       return reply;
     } catch (err: any) {
-      const errMsg = '❌ ' + (err?.message ?? 'Unknown error');
+      const base = err?.message ?? 'Unknown error';
+      const errMsg = '❌ ' + (base.includes('timed out')
+        ? base + ' — elder app didn’t reply. Check: elder phone online, service running (Start Service), and the Device ID shown on the elder app matches the caretaker’s.'
+        : base);
       setHistory(h => [{ cmd, reply: errMsg, time: new Date(), ok: false }, ...h].slice(0, 20));
       setLastReply(errMsg);
       setCmdStatus('error');

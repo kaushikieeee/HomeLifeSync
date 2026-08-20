@@ -34,7 +34,9 @@ export type DeviceStatus = {
   charging:  boolean;
   lat:       number;
   lng:       number;
+  accuracy?: number;
   deviceId?: string;
+  torch?:    boolean;
   // Live vitals streamed by the elder-helper health monitor (HealthHandler)
   heartRate?:       number;
   spo2?:            number;
@@ -157,6 +159,30 @@ export async function getDeviceFcmToken(deviceId: string): Promise<string | null
 // ── Subscribe to elder heart/health alerts ──────────────────────────
 // Fires whenever the elder device writes to /devices/{id}/alerts.
 // Used to raise a LOUD medical warning on the caretaker side.
+//
+// Alerts node grows forever and `onChildAdded` replays EVERY existing child
+// on attach, so a per-device cursor (module state + localStorage) filters out
+// historical alerts on connect/reconnect/reload.
+
+const ALERT_CURSOR_KEY = 'hls:alertCursors';
+let alertCursors: Record<string, number> | null = null;
+
+function loadAlertCursors(): Record<string, number> {
+  if (alertCursors) return alertCursors;
+  let cursors: Record<string, number> = {};
+  try {
+    const raw = localStorage.getItem(ALERT_CURSOR_KEY);
+    if (raw) cursors = JSON.parse(raw);
+  } catch { /* ignore */ }
+  alertCursors = cursors;
+  return cursors;
+}
+
+function storeAlertCursor(deviceId: string, ts: number) {
+  const cursors = loadAlertCursors();
+  cursors[deviceId] = ts;
+  try { localStorage.setItem(ALERT_CURSOR_KEY, JSON.stringify(cursors)); } catch { /* ignore */ }
+}
 
 export function subscribeToAlerts(
   deviceId: string,
@@ -165,9 +191,18 @@ export function subscribeToAlerts(
   const db        = getFirebaseDb();
   const alertsRef = ref(db, `devices/${deviceId}/alerts`);
 
+  let cursor = loadAlertCursors()[deviceId] ?? 0;
+
   onChildAdded(alertsRef, (snap) => {
     if (!snap.exists()) return;
-    const val = snap.val() as Omit<HeartAlert, 'id'>;
+    const val = snap.val();
+    const ts  = Number(val?.ts ?? 0);
+    // Skip historical alerts already seen (or older than our cursor).
+    if (ts !== 0 && ts <= cursor) return;
+    if (ts > cursor) {
+      cursor = ts;
+      storeAlertCursor(deviceId, ts);
+    }
     onAlert({ id: snap.key ?? String(Date.now()), ...val, source: 'elder' });
   });
 

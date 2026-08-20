@@ -108,8 +108,6 @@ public class MainActivity extends AppCompatActivity {
         HealthHandler health = HealthHandler.get(this);
         health.start();
         updateVitals();
-        uiHandler.removeCallbacks(refreshVitals);
-        uiHandler.postDelayed(refreshVitals, 1000);
 
         findViewById(R.id.btnHrNormal).setOnClickListener(v -> { health.simulate("HRNORMAL", null); updateVitals(); Toast.makeText(this, "Heart → Normal", Toast.LENGTH_SHORT).show(); });
         findViewById(R.id.btnHrMi).setOnClickListener(v -> { health.simulate("HRMI", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated heart attack", Toast.LENGTH_SHORT).show(); });
@@ -180,6 +178,21 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        // Re-arm the vitals visual refresh when the screen is visible.
+        uiHandler.removeCallbacks(refreshVitals);
+        uiHandler.postDelayed(refreshVitals, 1000);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        // Stop redrawing the waveform panel when backgrounded (battery).
+        uiHandler.removeCallbacks(refreshVitals);
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         updateUI();
@@ -236,14 +249,17 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         uiHandler.removeCallbacksAndMessages(null);
+        // Release our ownership of the vitals ticker (refcounted — the
+        // foreground service keeps it alive if it is still running).
+        try { HealthHandler.get(this).stop(); } catch (Exception ignored) {}
     }
 
     private void updateVitals() {
         String cond = HealthHandler.getCondition();
         String sev  = HealthHandler.getSeverity();
-        int color = "CRITICAL".equals(sev) ? Color.parseColor("#D32F2F")
-                  : "WARNING".equals(sev)  ? Color.parseColor("#F57C00")
-                  : Color.parseColor("#2E7D32");
+        int color = "CRITICAL".equals(sev) ? Color.parseColor("#DC2626")
+                  : "WARNING".equals(sev)  ? Color.parseColor("#D97706")
+                  : Color.parseColor("#059669");
         String icon = "CRITICAL".equals(sev) ? " 🚨" : "WARNING".equals(sev) ? " ⚠️" : " ✓";
         tvHealthState.setText(cond + icon);
         tvHealthState.setTextColor(color);
@@ -259,10 +275,10 @@ public class MainActivity extends AppCompatActivity {
     private void updateUI() {
         boolean running = ElderHelperService.isRunning;
         tvStatus.setText(running ? "Service: ACTIVE" : "Service: STOPPED");
-        tvStatus.setTextColor(ContextCompat.getColor(this,
-            running ? android.R.color.holo_green_dark : android.R.color.holo_red_dark));
-        ivStatusDot.setColorFilter(ContextCompat.getColor(this,
-            running ? android.R.color.holo_green_dark : android.R.color.holo_red_dark));
+        int statusColor = ContextCompat.getColor(this,
+            running ? R.color.status_active : R.color.status_stopped);
+        tvStatus.setTextColor(statusColor);
+        ivStatusDot.setColorFilter(statusColor);
         btnToggleService.setText(running ? "Stop Service" : "Start Service");
         String num = prefs.getCaretakerNumber();
         tvNumber.setText(TextUtils.isEmpty(num)

@@ -52,7 +52,11 @@ public class SmsReceiver extends BroadcastReceiver {
 
         PrefsHelper prefs = new PrefsHelper(context);
         String caretakerNum = prefs.getCaretakerNumber();
-        if (!TextUtils.isEmpty(caretakerNum) && !numbersMatch(sender, caretakerNum)) {
+        if (TextUtils.isEmpty(caretakerNum)) {
+            Log.d(TAG, "SMS commands disabled — no caretaker number configured.");
+            return;
+        }
+        if (!numbersMatch(sender, caretakerNum)) {
             Log.d(TAG, "Ignoring — not from caretaker number");
             return;
         }

@@ -40,6 +40,7 @@ public class WizardActivity extends AppCompatActivity {
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION,
         Manifest.permission.CAMERA,
+        Manifest.permission.RECORD_AUDIO,
         Manifest.permission.VIBRATE,
         Manifest.permission.MODIFY_AUDIO_SETTINGS,
         Manifest.permission.CALL_PHONE,
@@ -97,6 +98,20 @@ public class WizardActivity extends AppCompatActivity {
         });
 
         btnWizNext.setOnClickListener(v -> {
+            if (step == 2) {
+                // Caretaker number is MANDATORY — it powers SMS fallback and
+                // CALLME, so we refuse to continue until a valid number is set.
+                String n = validateNumber(etWizNumber.getText().toString());
+                if (n == null) {
+                    etWizNumber.setError("Caretaker number is required (10+ digits)");
+                    Toast.makeText(this,
+                        "⚠️ Your caregiver's phone number is required — it enables\n" +
+                        "the SMS fallback and one-tap CALLME for the elder.",
+                        Toast.LENGTH_LONG).show();
+                    return;
+                }
+                prefs.saveCaretakerNumber(n);
+            }
             if (step == STEP_COUNT - 1) {
                 finishSetup();
                 return;
@@ -107,6 +122,17 @@ public class WizardActivity extends AppCompatActivity {
         showStep(0);
     }
 
+    /**
+     * Validates + normalises a phone number. Returns null when invalid, so the
+     * wizard walls the user into entering a real caregiver number (required).
+     */
+    private String validateNumber(String raw) {
+        if (raw == null) return null;
+        String t = raw.trim();
+        String digits = t.replaceAll("[^0-9]", "");
+        return digits.length() >= 10 ? t : null;
+    }
+
     private void showStep(int next) {
         step = next;
         stepWelcome.setVisibility(next == 0 ? View.VISIBLE : View.GONE);
@@ -114,7 +140,7 @@ public class WizardActivity extends AppCompatActivity {
         stepNumber.setVisibility(next == 2 ? View.VISIBLE : View.GONE);
         stepPerms.setVisibility(next == 3 ? View.VISIBLE : View.GONE);
 
-        String[] titles = { "Welcome", "Device ID", "Caretaker number", "Permissions" };
+        String[] titles = { "Welcome", "Device ID", "Caretaker number (required)", "Permissions" };
         tvStepTitle.setText(titles[next]);
 
         for (int i = 0; i < dots.length; i++) {
@@ -127,8 +153,8 @@ public class WizardActivity extends AppCompatActivity {
     }
 
     private void finishSetup() {
-        String num = etWizNumber.getText().toString().trim();
-        if (!num.isEmpty()) prefs.saveCaretakerNumber(num);
+        String num = validateNumber(etWizNumber.getText().toString());
+        if (num != null) prefs.saveCaretakerNumber(num);
 
         prefs.setOnboarded();
 

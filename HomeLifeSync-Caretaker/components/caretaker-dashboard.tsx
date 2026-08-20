@@ -8,7 +8,8 @@ import {
   Bell, Zap, ChevronRight, Home, Command, Clock, Pill,
   Lock, MessageSquare, Smartphone, Activity, Brain, Wifi, Camera,
   Grid, Thermometer, Power, FileText, MessageCircle, List,
-  CheckCircle2, Loader2, BatteryLow,
+  CheckCircle2, Loader2, BatteryLow, Battery, ArrowUpRight, Watch,
+  Heart,
 } from 'lucide-react';
 import { useHaptic, useSelectionHaptic, ImpactStyle } from '@/hooks/use-haptic';
 import { toast } from 'sonner';
@@ -26,6 +27,7 @@ import { VitalsCard } from '@/components/vitals-card';
 import { HeartAlertOverlay } from '@/components/heart-alert-overlay';
 import { SCENARIOS, NORMAL_VITALS } from '@/lib/health';
 import { ConnectWizard } from '@/components/connect-wizard';
+import { firebaseConfigured } from '@/lib/firebase';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -84,14 +86,18 @@ export function CaretakerDashboard() {
   const [tab,         setTab]         = useState<Tab>('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [lastLoc, setLastLoc] = useState<{ reply: string; time: Date } | null>(null);
 
   // ── Firebase hook ────────────────────────────────────────────────
+  // Only attach when the build ships Firebase config — an empty env would
+  // initialize an empty app and throw in the status subscription.
+  const fbDevId = firebaseConfigured ? deviceId : null;
   const { deviceStatus, history, cmdStatus, lastReply, send, connected } =
-    useFirebaseDevice(deviceId);
+    useFirebaseDevice(fbDevId);
 
   // ── Wearable vitals + loud health alerts ─────────────────────────
   const health = useHealthMonitor();
-  useElderAlerts(deviceId, health.pushElderAlert);
+  useElderAlerts(fbDevId, health.pushElderAlert);
 
   // Sync vitals from the SAME feed the elder device publishes, so heart
   // rate is identical on the elder phone, the caretaker and the tablet.
@@ -205,6 +211,27 @@ export function CaretakerDashboard() {
       }
     });
 
+  // ── Fetch + display the elder's live location ──────────────────────
+  // Sends LOC (elder writes the fix to /status.lat/lng and replies with a
+  // maps link), then surfaces it in the Location card on the home tab.
+  const locate = async () => {
+    if (!deviceId) { toast.error('No device connected'); return; }
+    haptic(ImpactStyle.Medium);
+    const toastId = toast.loading('Fetching location…');
+    const reply   = await send('LOC');
+    toast.dismiss(toastId);
+    setLastLoc({ reply, time: new Date() });
+    if (reply.startsWith('❌')) {
+      toast.error(reply);
+    } else {
+      toast.success('Location updated', { description: reply.split('\n')[0].slice(0, 60) });
+    }
+  };
+
+  const locLat = deviceStatus?.lat;
+  const locLng = deviceStatus?.lng;
+  const torchOn = deviceStatus?.torch ?? false;
+
   // ── Command search filter ────────────────────────────────────────
   const filteredCategories = useMemo(() => {
     const q = searchQuery.toLowerCase();
@@ -238,17 +265,22 @@ export function CaretakerDashboard() {
   return (
     <div className="h-screen bg-background overflow-hidden flex flex-col font-sans relative">
 
-      {/* Header */}
+      {/* Header — floating glass pill */}
       <div className={cn(
-        "shrink-0 px-4 pt-safe pb-3 flex items-center justify-between z-30 transition-colors duration-200",
+        "shrink-0 mx-3 mt-3 mb-2 px-4 pt-safe pb-3 flex items-center justify-between z-30 rounded-[22px] transition-colors duration-200",
         scrolled
-          ? "bg-background/95 backdrop-blur-md shadow-sm border-b border-border"
-          : "bg-background/70 backdrop-blur-md border-b border-transparent"
+          ? "bg-card/85 backdrop-blur-md shadow-sm border border-border"
+          : "bg-background/70 backdrop-blur-md border border-transparent"
       )}>
-        <h1 className="text-[28px] font-bold tracking-tight text-foreground">
-          <span className="text-[#FF9933]">Home</span>Sync
-          <span className="text-[#138808]">.</span>
-        </h1>
+        <div className="flex items-center gap-2.5">
+          <span className="flex items-center justify-center w-10 h-10 rounded-2xl bg-primary/10 text-primary">
+            <Heart className="w-5 h-5" />
+          </span>
+          <h1 className="text-[26px] font-bold tracking-tight text-foreground leading-none">
+            <span className="text-[#FF9933]">Home</span>Sync
+            <span className="text-[#138808]">.</span>
+          </h1>
+        </div>
 
         <div className="flex items-center gap-2">
           {/* Live command status indicator */}
@@ -262,7 +294,7 @@ export function CaretakerDashboard() {
             <DropdownMenuTrigger asChild>
               <button
                 onClick={() => haptic(ImpactStyle.Medium)}
-                className="w-9 h-9 rounded-full bg-muted flex items-center justify-center active:opacity-70"
+                className="w-9 h-9 rounded-full bg-muted flex items-center justify-center active:opacity-70 cursor-pointer transition-colors hover:bg-muted/70"
               >
                 <Settings className="w-5 h-5" />
               </button>
@@ -300,22 +332,25 @@ export function CaretakerDashboard() {
               initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18, ease: 'easeOut' }}
             >
-              {/* Device card */}
-              <div className="bg-card rounded-[24px] p-5 border border-border shadow-sm mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Smartphone className="w-5 h-5 text-primary" />
+              {/* Device card — hero for the elder's phone */}
+              <div className="relative overflow-hidden bg-card rounded-[24px] p-5 border border-border shadow-sm mb-6">
+                <div className="pointer-events-none absolute -right-12 -top-14 w-44 h-44 rounded-full bg-gradient-to-br from-cyan-400/15 to-blue-500/10" />
+                <div className="pointer-events-none absolute -left-10 -bottom-16 w-36 h-36 rounded-full bg-emerald-400/10" />
+                <div className="relative flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white shadow-md shadow-cyan-500/25">
+                    <Smartphone className="w-5.5 h-5.5" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[15px] font-semibold">
+                    <div className="text-[15px] font-semibold leading-tight">
                       {(role || name) ? [role, name].filter(Boolean).join(' · ') : 'Connected device'}
                     </div>
                     <div className="text-[13px] text-muted-foreground font-mono">{deviceId}</div>
                     {deviceStatus && (
-                      <div className="text-[11px] text-muted-foreground mt-0.5">
-                        🔋 {deviceStatus.battery ?? '–'}%
-                        {deviceStatus.charging ? ' ⚡' : ''}
-                        {' · '}Last seen {new Date(deviceStatus.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-1">
+                        <Battery className={cn("w-3.5 h-3.5", (deviceStatus.battery ?? 0) < 20 ? "text-red-500" : "text-emerald-500")} />
+                        <span>{deviceStatus.battery ?? '–'}%{deviceStatus.charging ? ' · charging' : ''}</span>
+                        <span className="w-1 h-1 rounded-full bg-muted-foreground/40" />
+                        <span>Last seen {new Date(deviceStatus.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                     )}
                   </div>
@@ -335,6 +370,50 @@ export function CaretakerDashboard() {
                     </span>
                   </div>
                 </div>
+              </div>
+
+              {/* Live location card */}
+              <div className="bg-card rounded-[24px] p-5 border border-border shadow-sm mb-6 overflow-hidden relative">
+                <div className="absolute -right-8 -top-8 w-32 h-32 rounded-full bg-blue-500/5 pointer-events-none" />
+                <div className="flex items-center justify-between mb-1">
+                  <h2 className="text-[15px] font-semibold flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-blue-500" /> Location
+                  </h2>
+                  {lastLoc && (
+                    <span className="text-[11px] text-muted-foreground font-mono">
+                      Fetched {lastLoc.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                </div>
+
+                {locLat != null && locLng != null ? (
+                  <div className="mt-3 rounded-2xl bg-blue-500/10 border border-blue-500/20 p-4">
+                    <div className="font-mono text-[22px] font-bold tracking-tight text-foreground leading-tight">
+                      {locLat.toFixed(5)}, {locLng.toFixed(5)}
+                    </div>
+                    <div className="text-[12px] text-muted-foreground mt-1">
+                      {deviceStatus?.accuracy != null && `Accuracy ±${Math.round(deviceStatus.accuracy)} m · `}
+                      Last seen {deviceStatus?.lastSeen
+                        ? new Date(deviceStatus.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : '—'}
+                    </div>
+                    <a
+                      href={`https://maps.google.com/?q=${locLat},${locLng}`}
+                      target="_blank" rel="noreferrer"
+                      className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-cyan-700 dark:text-cyan-300 cursor-pointer transition-colors hover:text-cyan-600"
+                    >
+                      Open in Google Maps <ArrowUpRight className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                ) : lastLoc ? (
+                  <p className="mt-3 text-[13px] text-muted-foreground whitespace-pre-line">{lastLoc.reply}</p>
+                ) : (
+                  <p className="mt-3 text-[13px] text-muted-foreground">
+                    {connected
+                      ? 'No location yet — slide "Locate" above to fetch the elder position here.'
+                      : 'Connect to a device, then slide "Locate" to see their position here.'}
+                  </p>
+                )}
               </div>
 
               {/* Wearable vitals + health-event simulation */}
@@ -359,7 +438,7 @@ export function CaretakerDashboard() {
                 />
                 <SlideButton
                   label="Slide to Locate"
-                  onSuccess={() => runCommand("LOC", "Locating Device")}
+                  onSuccess={locate}
                   color="bg-[#0A84FF]"
                   icon={<MapPin className="w-6 h-6 text-white" />}
                 />
@@ -372,7 +451,12 @@ export function CaretakerDashboard() {
               <div className="grid grid-cols-2 gap-3 mb-6">
                 <QuickTile icon={<Phone      className="w-5 h-5" />} label="Call"       color="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" onClick={() => runCommand("CALLME",   "Call device")} />
                 <QuickTile icon={<Bell       className="w-5 h-5" />} label="Ring"       color="bg-blue-500/10 text-blue-500"    onClick={() => runCommand("RING",     "Ring device")} />
-                <QuickTile icon={<Zap        className="w-5 h-5" />} label="Flashlight" color="bg-amber-500/10 text-amber-500"  onClick={() => runCommand("TORCHON",  "Flashlight ON")} />
+                <QuickTile
+                  icon={<Zap className={cn("w-5 h-5", torchOn && "fill-current")} />}
+                  label={torchOn ? 'Flashlight ON' : 'Flashlight'}
+                  color={torchOn ? "bg-amber-500/25 text-amber-500" : "bg-amber-500/10 text-amber-500"}
+                  onClick={() => runCommand(torchOn ? "TORCHOFF" : "TORCHON", torchOn ? "Flashlight OFF" : "Flashlight ON")}
+                />
                 <QuickTile icon={<MessageSquare className="w-5 h-5" />} label="Check-in" color="bg-teal-500/10 text-teal-600 dark:text-teal-400" onClick={() => runCommand("CHECKIN", "Check-in")} />
               </div>
 
@@ -386,17 +470,27 @@ export function CaretakerDashboard() {
                 </button>
                 <button
                   onClick={() => runCommand("BATNOW", "Battery level")}
-                  className="flex-1 h-12 rounded-2xl bg-card border border-border shadow-sm flex items-center justify-center gap-2 text-[15px] font-medium active:scale-[0.98] transition-transform"
+                  className="flex-1 h-12 rounded-2xl bg-card border border-border shadow-sm flex items-center justify-center gap-2 text-[15px] font-medium active:scale-[0.98] transition-all duration-150 cursor-pointer hover:bg-muted/50"
                 >
                   <BatteryLow className="w-4 h-4 text-amber-500" /> Battery
                 </button>
                 <button
                   onClick={() => runCommand("PING", "Check device is reachable")}
-                  className="flex-1 h-12 rounded-2xl bg-card border border-border shadow-sm flex items-center justify-center gap-2 text-[15px] font-medium text-cyan-600 dark:text-cyan-400 active:scale-[0.98] transition-transform"
+                  className="flex-1 h-12 rounded-2xl bg-card border border-border shadow-sm flex items-center justify-center gap-2 text-[15px] font-medium text-cyan-600 dark:text-cyan-400 active:scale-[0.98] transition-all duration-150 cursor-pointer hover:bg-muted/50"
                 >
                   <Wifi className="w-4 h-4" /> Ping
                 </button>
               </div>
+
+              {/* Mi Band app — opens the wearable app on the elder's phone */}
+              <button
+                onClick={() => runCommand("OPENAPP com.mc.miband1", "Open Mi Band app")}
+                className="w-full h-14 rounded-2xl bg-gradient-to-r from-[#0A84FF]/15 to-[#5AC8FA]/10 border border-[#0A84FF]/25 shadow-sm flex items-center justify-center gap-3 text-[16px] font-semibold text-[#0A84FF] dark:text-[#5AC8FA] active:scale-[0.98] transition-all duration-150 cursor-pointer hover:from-[#0A84FF]/25 hover:to-[#5AC8FA]/20 mb-6"
+              >
+                <Watch className="w-5 h-5" />
+                Open Mi Band app
+                <span className="text-[11px] font-mono font-normal text-muted-foreground">com.mc.miband1</span>
+              </button>
 
               {/* Command history (from Firebase) */}
               <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-1 mb-3">
@@ -410,7 +504,7 @@ export function CaretakerDashboard() {
               ) : (
                 <div className="bg-card rounded-2xl border border-border shadow-sm divide-y divide-border overflow-hidden">
                   {history.map((h, i) => (
-                    <div key={i} className="flex items-center gap-3 px-4 py-3">
+                    <div key={i} className="flex items-center gap-3 px-4 py-3 transition-colors duration-150 hover:bg-muted/40">
                       <div className={cn(
                         "w-9 h-9 rounded-full flex items-center justify-center shrink-0",
                         h.ok ? "bg-primary/10" : "bg-red-500/10"
@@ -465,7 +559,7 @@ export function CaretakerDashboard() {
                     <div key={index} className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
                       <button
                         onClick={() => { selectionHaptic(); setActiveCategory(isOpen && !searchQuery ? null : category.title); }}
-                        className="w-full flex items-center gap-3 p-3.5 active:bg-muted transition-colors"
+                        className="w-full flex items-center gap-3 p-3.5 active:bg-muted transition-all duration-150 cursor-pointer hover:bg-muted/50"
                       >
                         <div className={cn("w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0", style.chip)}>
                           {style.icon}
@@ -498,7 +592,7 @@ export function CaretakerDashboard() {
                                 key={ci}
                                 onClick={() => runCommand(cmd.cmd, cmd.desc)}
                                 disabled={cmdStatus === 'sending' || cmdStatus === 'waiting' || !supported}
-                                className="w-full flex items-center justify-between p-4 pl-11 active:bg-muted transition-colors group text-left disabled:opacity-40"
+                                className="w-full flex items-center justify-between p-4 pl-11 active:bg-muted transition-all duration-150 cursor-pointer group text-left disabled:opacity-40 disabled:cursor-not-allowed hover:bg-muted/40"
                               >
                                 <div className="min-w-0">
                                   <div className="font-medium text-[15px]">{cmd.cmd}</div>
@@ -561,8 +655,8 @@ function TabButton({ active, icon, label, onClick }: {
 }) {
   return (
     <button onClick={onClick} className={cn(
-      "flex-1 flex flex-col items-center gap-1 py-2 rounded-[16px] transition-colors duration-200 active:opacity-80",
-      active ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+      "flex-1 flex flex-col items-center gap-1 py-2 rounded-[16px] transition-all duration-200 active:opacity-80 cursor-pointer",
+      active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-primary"
     )}>
       {icon}
       <span className="text-[11px] font-medium">{label}</span>
@@ -575,7 +669,7 @@ function QuickTile({ icon, label, color, onClick }: {
 }) {
   return (
     <button onClick={onClick}
-      className="bg-card rounded-2xl border border-border shadow-sm flex flex-col items-center gap-2 py-4 active:scale-[0.97] transition-transform"
+      className="bg-card rounded-2xl border border-border shadow-sm flex flex-col items-center gap-2 py-4 active:scale-[0.97] transition-all duration-150 cursor-pointer hover:shadow-md hover:-translate-y-0.5"
     >
       <div className={cn("w-10 h-10 rounded-full flex items-center justify-center", color)}>
         {icon}

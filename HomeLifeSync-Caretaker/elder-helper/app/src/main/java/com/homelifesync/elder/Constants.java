@@ -12,8 +12,9 @@ public final class Constants {
 
     // ── SMS fallback ──────────────────────────────────────────────────
     /** Caretaker's phone number for SMS fallback (E.164 or local format).
-     *  Leave "" to accept SMS from any number (less secure). */
-    public static final String CARETAKER_NUMBER = "";   // ← optional
+     *  The first-run wizard collects it as a REQUIRED field; this constant is
+     *  only used as a fallback when setup was somehow bypassed. */
+    public static final String CARETAKER_NUMBER = "";   // collected at setup
 
     // ── Firebase Realtime DB paths ────────────────────────────────────
     /** Root node: /devices/{DEVICE_ID}/ */
@@ -32,6 +33,7 @@ public final class Constants {
     public static final String PREF_SERVICE_ACTIVE = "service_active";
     public static final String PREF_DEVICE_ID      = "device_id";
     public static final String PREF_ONBOARDED      = "onboarded";
+    public static final String PREF_TORCH          = "torch_state";
 
     // ── Intent extras ─────────────────────────────────────────────────
     public static final String EXTRA_SMS_SENDER = "sms_sender";

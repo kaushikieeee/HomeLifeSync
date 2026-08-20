@@ -57,7 +57,7 @@ public class VitalsPanelView extends View {
 
     private final Paint[] tracePaints;
     private final int[] baseColors = {
-        0xFF22C55E, 0xFF38BDF8, 0xFFFACC15, 0xFFF87171, 0xFFFB923C, 0xFFC084FC
+        0xFF10B981, 0xFF22D3EE, 0xFFFACC15, 0xFFF87171, 0xFFFB923C, 0xFFC084FC
     };
     private final Paint sysPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint diaPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -79,7 +79,7 @@ public class VitalsPanelView extends View {
     // Number of appended samples per strip still waiting to be revealed.
     private final float[] toReveal = new float[N_STRIPS];
 
-    private int ecgColor = 0xFF22C55E;
+    private int ecgColor = 0xFF10B981;
     private boolean irregular    = false;
     private boolean stElevation  = false;
     private boolean seeded       = false;
@@ -109,8 +109,8 @@ public class VitalsPanelView extends View {
     public VitalsPanelView(Context c, AttributeSet a, int def) {
         super(c, a, def);
 
-        bgPaint.setColor(0xFF0B1220);
-        gridPaint.setColor(0xFF1F2A37);
+        bgPaint.setColor(0xFF0D1D26);
+        gridPaint.setColor(0xFF1C3947);
         gridPaint.setStrokeWidth(dp(1f));
         sweepPaint.setColor(0x2FFFFFFF);
         sweepPaint.setStrokeWidth(dp(1f));
@@ -155,9 +155,9 @@ public class VitalsPanelView extends View {
                      double temp, int sys, int dia, int gluc,
                      String condition, String severity) {
 
-        ecgColor = "CRITICAL".equals(severity) ? 0xFFEF4444
-                 : "WARNING".equals(severity)  ? 0xFFF59E0B
-                 : 0xFF22C55E;
+        ecgColor = "CRITICAL".equals(severity) ? 0xFFDC2626
+                 : "WARNING".equals(severity)  ? 0xFFD97706
+                 : 0xFF10B981;
         String c = condition == null ? "" : condition.toUpperCase();
         irregular   = c.contains("ATRIAL") || c.contains("ARRHYTH");
         stElevation = c.contains("INFARCT");

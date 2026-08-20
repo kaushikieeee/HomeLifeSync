@@ -14,9 +14,9 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         try {
-            getBridge().getWebView().post(() ->
-                getBridge().getWebView().loadUrl(getBridge().getLocalUrl() + "/tablet"));
-        } catch (Exception ignored) {
+getBridge().getWebView().post(() ->
+            getBridge().getWebView().loadUrl(getBridge().getLocalUrl() + "/tablet/"));
+    } catch (Exception ignored) {
             // Bridge not ready yet — fall back to the default URL.
         }
     }

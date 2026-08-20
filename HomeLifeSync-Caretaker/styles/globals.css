@@ -3,75 +3,81 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * HomeLifeSync design system — "Calm Cyan" (age-friendly, accessible).
+ * Soft healthcare teal/cyan family, high-contrast deep-teal text, larger
+ * radii and touch-friendly scale tuned for elderly carers.
+ * See ui-ux-pro-max design-system recommendations.
+ */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --background: oklch(0.975 0.012 200);
+  --foreground: oklch(0.255 0.05 220);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.255 0.05 220);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.255 0.05 220);
+  --primary: oklch(0.545 0.14 225);
+  --primary-foreground: oklch(0.985 0.01 200);
+  --secondary: oklch(0.94 0.02 205);
+  --secondary-foreground: oklch(0.3 0.06 220);
+  --muted: oklch(0.945 0.018 205);
+  --muted-foreground: oklch(0.46 0.04 215);
+  --accent: oklch(0.94 0.03 205);
+  --accent-foreground: oklch(0.3 0.09 220);
   --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --destructive-foreground: oklch(0.985 0.01 200);
+  --border: oklch(0.895 0.02 205);
+  --input: oklch(0.87 0.025 205);
+  --ring: oklch(0.72 0.12 225);
+  --chart-1: oklch(0.545 0.14 225);
+  --chart-2: oklch(0.72 0.08 205);
+  --chart-3: oklch(0.65 0.15 155);
+  --chart-4: oklch(0.75 0.12 90);
+  --chart-5: oklch(0.62 0.16 260);
+  --radius: 1rem;
+  --sidebar: oklch(0.98 0.01 200);
+  --sidebar-foreground: oklch(0.255 0.05 220);
+  --sidebar-primary: oklch(0.545 0.14 225);
+  --sidebar-primary-foreground: oklch(0.985 0.01 200);
+  --sidebar-accent: oklch(0.94 0.03 205);
+  --sidebar-accent-foreground: oklch(0.3 0.09 220);
+  --sidebar-border: oklch(0.895 0.02 205);
+  --sidebar-ring: oklch(0.72 0.12 225);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.145 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.145 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.985 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: oklch(0.637 0.237 25.331);
-  --border: oklch(0.269 0 0);
-  --input: oklch(0.269 0 0);
-  --ring: oklch(0.439 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.269 0 0);
-  --sidebar-ring: oklch(0.439 0 0);
+  --background: oklch(0.155 0.03 220);
+  --foreground: oklch(0.945 0.015 200);
+  --card: oklch(0.19 0.035 220);
+  --card-foreground: oklch(0.945 0.015 200);
+  --popover: oklch(0.19 0.035 220);
+  --popover-foreground: oklch(0.945 0.015 200);
+  --primary: oklch(0.75 0.12 225);
+  --primary-foreground: oklch(0.18 0.04 220);
+  --secondary: oklch(0.26 0.04 220);
+  --secondary-foreground: oklch(0.945 0.015 200);
+  --muted: oklch(0.25 0.035 220);
+  --muted-foreground: oklch(0.68 0.03 210);
+  --accent: oklch(0.27 0.045 220);
+  --accent-foreground: oklch(0.945 0.015 200);
+  --destructive: oklch(0.62 0.22 27);
+  --destructive-foreground: oklch(0.98 0.01 200);
+  --border: oklch(0.3 0.04 220);
+  --input: oklch(0.3 0.04 220);
+  --ring: oklch(0.75 0.12 225);
+  --chart-1: oklch(0.72 0.12 225);
+  --chart-2: oklch(0.68 0.06 205);
+  --chart-3: oklch(0.68 0.16 155);
+  --chart-4: oklch(0.75 0.12 90);
+  --chart-5: oklch(0.65 0.16 260);
+  --sidebar: oklch(0.17 0.032 220);
+  --sidebar-foreground: oklch(0.945 0.015 200);
+  --sidebar-primary: oklch(0.72 0.12 225);
+  --sidebar-primary-foreground: oklch(0.18 0.04 220);
+  --sidebar-accent: oklch(0.26 0.04 220);
+  --sidebar-accent-foreground: oklch(0.945 0.015 200);
+  --sidebar-border: oklch(0.3 0.04 220);
+  --sidebar-ring: oklch(0.75 0.12 225);
 }
 
 @theme inline {
@@ -120,6 +126,29 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+  }
+  input,
+  textarea,
+  button,
+  select,
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/*
+ * Lag-free + accessibility guardrails:
+ * - Respect prefers-reduced-motion (kill all animations/flash pulsing).
+ * - Smooth scrolling only where content scrolls; nothing heavy here.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -17,6 +17,11 @@ import android.os.Vibrator;
 import android.provider.Settings;
 
 import com.homelifesync.elder.service.ElderHelperService.ReplyCallback;
+import com.homelifesync.elder.firebase.FirebaseRepository;
+import com.homelifesync.elder.util.PrefsHelper;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /** Handles: RING, ALRM, TORCHON, TORCHOFF, VIBRATE, MUTE, UNMUTE,
  *           SILENT, VOLMAX, VOLLOW, SCREENON, SCREENDIM, SCREENMAX */
@@ -69,10 +74,49 @@ public class DeviceHandler {
         CameraManager cm = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
         try {
             cm.setTorchMode(cm.getCameraIdList()[0], on);
+            setTorchState(on);
             cb.reply("🔦 Flashlight " + (on ? "ON" : "OFF"));
         } catch (CameraAccessException e) {
             cb.reply("❌ Flashlight error: " + e.getMessage());
         }
+    }
+
+    // ── Torch state memory ─────────────────────────────────────────────
+    // The flash state is persisted locally and mirrored to /status.torch so
+    // the caretaker + tablet show the REAL state and can toggle it, instead of
+    // only ever sending a one-way "on" button.
+
+    private PrefsHelper prefs() { return new PrefsHelper(context); }
+
+    /** Persist the torch state locally AND publish it to Firebase status. */
+    private void setTorchState(boolean on) {
+        prefs().setTorchState(on);
+        publishTorchStatus();
+    }
+
+    /** Current persisted torch state (survives restarts). */
+    public boolean getTorchState() {
+        return prefs().getTorchState();
+    }
+
+    /** Mirror the persisted torch state into /devices/{id}/status/torch. */
+    public void publishTorchStatus() {
+        Map<String, Object> m = new HashMap<>();
+        m.put("torch", getTorchState());
+        FirebaseRepository.get(context).updateStatus(m);
+    }
+
+    /** Re-apply the last known flash state after a restart (state memory). */
+    public void restoreTorch() {
+        publishTorchStatus();
+        mainHandler.post(() -> {
+            try {
+                CameraManager cm = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+                cm.setTorchMode(cm.getCameraIdList()[0], getTorchState());
+            } catch (Exception ignored) {
+                // Camera unavailable — status still reflects the remembered state.
+            }
+        });
     }
 
     public void vibrate(ReplyCallback cb) {
@@ -141,6 +185,11 @@ public class DeviceHandler {
     public void stopRing(ReplyCallback cb) {
         mainHandler.post(this::stopPlayer);
         cb.reply("⏹️ Ringing stopped.");
+    }
+
+    /** Service teardown — release any active sound player without replying. */
+    public void stopSounds() {
+        mainHandler.post(this::stopPlayer);
     }
 
     private void stopPlayer() {

@@ -67,6 +67,18 @@ public class BatteryHandler {
         cb.reply("🌡️ Device temp: " + t + "°C");
     }
 
+    /** BATLOW — battery level compared against a threshold percentage. */
+    public void batteryBelow(ReplyCallback cb, double thresholdPct) {
+        int p = pct();
+        if (p < 0) { cb.reply("❌ Battery info unavailable."); return; }
+        if (p <= thresholdPct)
+            cb.reply("⚠️ LOW BATTERY — " + p + "% (at/below "
+                + (int) Math.round(thresholdPct) + "%) → plug in the device.");
+        else
+            cb.reply("✅ Battery OK — " + p + "% (above "
+                + (int) Math.round(thresholdPct) + "%)");
+    }
+
     public String buildStatusSummary() {
         Intent s = sticky();
         if (s == null) return "Status unavailable.";

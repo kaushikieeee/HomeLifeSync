@@ -55,6 +55,8 @@ public class FirebaseRepository {
     }
 
     private CommandListener commandListener;
+    private ChildEventListener commandChildListener;
+    private DatabaseReference commandsRef;
 
     // ── Singleton ────────────────────────────────────────────────────
 
@@ -85,55 +87,71 @@ public class FirebaseRepository {
 
     /**
      * Attach a ChildEventListener on /devices/{id}/commands/.
-     * Fires onChildAdded for every new command the caretaker writes.
+     * Fires onChildAdded for every command the caretaker writes.
      * Call this once from ElderHelperService.onCreate().
+     *
+     * Uses a plain listener (no orderByChild) so it needs no `.indexOn`
+     * security rule, and skips commands already marked `executed` so a
+     * re-attach (service restart, reconnection) never re-runs history.
      */
     public void startCommandListener(CommandListener listener) {
         this.commandListener = listener;
 
-        DatabaseReference commandsRef = deviceRef.child(Constants.DB_COMMANDS);
+        // Tear down any previous listener (service restarts attach again).
+        if (commandsRef != null && commandChildListener != null) {
+            commandsRef.removeEventListener(commandChildListener);
+        }
 
-        // limitToLast(1) + startAt(now) so we only hear NEW commands,
-        // not the entire history on reconnect.
-        long startTime = System.currentTimeMillis();
+        commandsRef = deviceRef.child(Constants.DB_COMMANDS);
+        commandChildListener = new ChildEventListener() {
 
-        commandsRef.orderByChild("ts")
-            .startAt(startTime)
-            .addChildEventListener(new ChildEventListener() {
+            @Override
+            public void onChildAdded(DataSnapshot snap, String prev) {
+                if (!snap.exists()) return;
 
-                @Override
-                public void onChildAdded(DataSnapshot snap, String prev) {
-                    if (!snap.exists()) return;
+                // Skip commands we already executed (dedupe on re-listen).
+                Boolean executed = snap.child("executed").getValue(Boolean.class);
+                if (Boolean.TRUE.equals(executed)) return;
 
-                    String cmdId  = snap.getKey();
-                    String cmd    = snap.child("cmd").getValue(String.class);
-                    String sender = snap.child("sender").getValue(String.class);
+                String cmdId  = snap.getKey();
+                String cmd    = snap.child("cmd").getValue(String.class);
+                String sender = snap.child("sender").getValue(String.class);
 
-                    if (cmd == null || cmd.isEmpty()) return;
+                if (cmd == null || cmd.isEmpty()) return;
 
-                    Log.d(TAG, "DB command received: " + cmd + " id=" + cmdId);
+                Log.d(TAG, "DB command received: " + cmd + " id=" + cmdId);
 
-                    // Mark as executed immediately so reconnects don't re-run it
-                    snap.getRef().child("executed").setValue(true);
+                // Mark as executed immediately so reconnects don't re-run it
+                snap.getRef().child("executed").setValue(true);
 
-                    if (commandListener != null) {
-                        commandListener.onCommand(
-                            cmdId  != null ? cmdId  : "",
-                            cmd.toUpperCase().trim(),
-                            sender != null ? sender : ""
-                        );
-                    }
+                if (commandListener != null) {
+                    commandListener.onCommand(
+                        cmdId  != null ? cmdId  : "",
+                        cmd.toUpperCase().trim(),
+                        sender != null ? sender : ""
+                    );
                 }
+            }
 
-                @Override public void onChildChanged(DataSnapshot s, String p) {}
-                @Override public void onChildRemoved(DataSnapshot s) {}
-                @Override public void onChildMoved(DataSnapshot s, String p) {}
-                @Override public void onCancelled(DatabaseError e) {
-                    Log.e(TAG, "Command listener cancelled: " + e.getMessage());
-                }
-            });
+            @Override public void onChildChanged(DataSnapshot s, String p) {}
+            @Override public void onChildRemoved(DataSnapshot s) {}
+            @Override public void onChildMoved(DataSnapshot s, String p) {}
+            @Override public void onCancelled(DatabaseError e) {
+                Log.e(TAG, "Command listener cancelled: " + e.getMessage());
+            }
+        };
+        commandsRef.addChildEventListener(commandChildListener);
 
         Log.d(TAG, "DB command listener started for device: " + deviceId);
+    }
+
+    /** Detach the command listener (service teardown) so restarts don't stack. */
+    public void stopCommandListener() {
+        if (commandsRef != null && commandChildListener != null) {
+            commandsRef.removeEventListener(commandChildListener);
+            commandChildListener = null;
+            Log.d(TAG, "DB command listener stopped for device: " + deviceId);
+        }
     }
 
     // ── FCM token ────────────────────────────────────────────────────

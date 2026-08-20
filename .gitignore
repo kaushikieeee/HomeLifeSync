@@ -28,3 +28,11 @@ android/HomeLifeSync-Tablet.iml
 
 # Capacitor
 capacitor.config.json.timestamp
+
+# Build artifacts / generated APKs
+output/
+*.apk
+
+# Credentials — never commit
+gen-lang-*.json
+**/google-services.json

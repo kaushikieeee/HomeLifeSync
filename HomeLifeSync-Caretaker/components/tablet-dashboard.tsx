@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Battery, Wifi, MapPin, Heart, Shield, Clock, Lock, Unlock, Zap,
   Thermometer, Moon, Sun, Smartphone, CheckCircle2, Wind,
   Volume2, VolumeX, Power, Tv, ArrowRight, Bell, Activity, RefreshCcw,
+  Navigation, ExternalLink, Home as HomeIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,9 +14,9 @@ import { NORMAL_VITALS, Vitals } from "@/lib/health";
 import { useFirebaseDevice } from "@/hooks/use-firebase-device";
 import { useElderAlerts } from "@/hooks/use-elder-alerts";
 import { firebaseConfigured } from "@/lib/firebase";
-import { isCriticalHeart } from "@/lib/commands";
+import { isCriticalHeart, type HeartAlert } from "@/lib/commands";
 
-// ── Runtime state (mock; a live Firebase feed can drive the same cards) ──
+// ── Runtime state (values the elder app hasn't pushed yet) ────────────
 
 interface RuntimeState {
   sos: boolean;
@@ -47,6 +48,7 @@ function clamp(v: number, lo: number, hi: number) { return Math.round(Math.min(h
 
 type Setup = { room: string; deviceId: string };
 const SETUP_KEY = "tablet_setup";
+const DEVICE_ID_RE = /^[0-9a-fA-F]{8}$/;
 
 // ── Setup wizard (first run / reconfigure) ────────────────────────────
 
@@ -57,24 +59,25 @@ function SetupWizard({ initial, onSave, onCancel }: {
 }) {
   const [room, setRoom] = useState(initial?.room ?? "");
   const [deviceId, setDeviceId] = useState(initial?.deviceId ?? "");
-  const ready = room.trim().length > 0 && deviceId.trim().length >= 4;
+  const deviceOk = DEVICE_ID_RE.test(deviceId.trim());
+  const ready = room.trim().length > 0 && deviceOk;
 
   return (
-    <div className="h-screen bg-background flex items-center justify-center p-6 font-sans">
+    <div className="min-h-screen bg-background flex items-center justify-center p-6 font-sans">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-[32px] font-bold tracking-tight text-foreground">
+          <h1 className="text-[36px] font-bold tracking-tight text-foreground">
             <span className="text-[#FF9933]">Home</span>Sync
             <span className="text-[#138808]">.</span>
           </h1>
-          <p className="text-muted-foreground mt-1 text-sm">Home display · setup</p>
+          <p className="text-muted-foreground mt-1 text-[15px]">Family wall display · setup</p>
         </div>
 
         <div className="bg-card p-6 rounded-[24px] shadow-sm border border-border">
           <Tv className="w-10 h-10 text-primary mx-auto mb-4" />
           <h2 className="text-lg font-bold tracking-tight text-center mb-1">Where is this screen?</h2>
           <p className="text-muted-foreground text-sm text-center mb-5 leading-relaxed">
-            Name this display (e.g. “Kitchen TV”) and enter your loved one's Device
+            Name this display (e.g. “Kitchen display”) and enter your loved one's Device
             ID to watch their status from any room.
           </p>
 
@@ -91,17 +94,25 @@ function SetupWizard({ initial, onSave, onCancel }: {
             value={deviceId}
             onChange={e => setDeviceId(e.target.value)}
             placeholder="e.g. a1b2c3d4"
-            className="h-12 rounded-xl text-center font-mono tracking-widest"
+            className={cn(
+              "h-12 rounded-xl text-center font-mono tracking-widest",
+              deviceId.trim() && !deviceOk && "border-red-400 text-red-500 focus-visible:ring-red-400"
+            )}
           />
+          {deviceId.trim() && !deviceOk && (
+            <p className="text-[11px] text-red-500 mt-2">
+              Device ID must be exactly 8 characters (letters a-f and numbers 0-9). Check for typos.
+            </p>
+          )}
 
           <Button onClick={() => onSave({ room: room.trim(), deviceId: deviceId.trim() })}
             disabled={!ready}
             className="w-full h-12 rounded-xl bg-primary text-lg font-semibold mt-5">
-            Start dashboard <ArrowRight className="w-4 h-4" />
+            Start display <ArrowRight className="w-4 h-4" />
           </Button>
 
           {onCancel && (
-            <button onClick={onCancel} className="w-full text-center text-muted-foreground text-[13px] mt-3">
+            <button onClick={onCancel} className="w-full text-center text-muted-foreground text-[13px] mt-3 cursor-pointer transition-colors duration-150 hover:text-foreground">
               Cancel
             </button>
           )}
@@ -111,13 +122,14 @@ function SetupWizard({ initial, onSave, onCancel }: {
   );
 }
 
-// ── Main dashboard ────────────────────────────────────────────────────
+// ── Main wall display ─────────────────────────────────────────────────
 
 export function TabletDashboard() {
   const [setup, setSetup] = useState<Setup | null>(null);
   const [showWizard, setShowWizard] = useState(false);
   const [run, setRun] = useState<RuntimeState>(INITIAL);
   const [vitals, setVitals] = useState<Vitals>({ ...NORMAL_VITALS });
+  const [now, setNow] = useState(new Date());
 
   useEffect(() => {
     const raw = localStorage.getItem(SETUP_KEY);
@@ -126,13 +138,20 @@ export function TabletDashboard() {
     }
   }, []);
 
-  // Live elder feed — only when a device is paired AND Firebase is configured.
-  // Without it the display runs its local simulation so it never looks dead.
-  const live = !!setup && firebaseConfigured;
-  const { deviceStatus, connected } = useFirebaseDevice(live ? setup.deviceId : null);
+  // Live clock — a wall display should always feel alive.
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 15_000);
+    return () => clearInterval(id);
+  }, []);
 
-  // Lively vitals — gentle random walk around normal. Paused while the real
-  // elder feed is streaming, otherwise the two writers would fight.
+  // Live elder feed — only when a device is paired AND Firebase is configured.
+  // Without either, the display keeps working off its demo feed so it never
+  // looks dead while a caretaker is still setting things up.
+  const live = !!setup && firebaseConfigured;
+  const { deviceStatus, connected, send } = useFirebaseDevice(live ? setup.deviceId : null);
+
+  // Gentle demo vitals — always inside normal bands, so the display NEVER
+  // invents health conditions on its own. Only a real elder alert can raise it.
   useEffect(() => {
     if (live) return;
     const id = setInterval(() => {
@@ -173,28 +192,23 @@ export function TabletDashboard() {
     }));
   }, [deviceStatus]);
 
-  // A WARNING/CRITICAL condition on the elder device raises the safety card.
-  useEffect(() => {
-    if (!deviceStatus?.heartSeverity) return;
-    if (deviceStatus.heartSeverity === 'CRITICAL' || deviceStatus.heartSeverity === 'WARNING') {
-      setRun(p => ({ ...p, condition: deviceStatus.heartCondition ?? 'CONDITION ALERT' }));
-    }
-  }, [deviceStatus]);
-
   // Health alerts pushed by the elder device → show on the activity strip.
-  useElderAlerts(live ? setup.deviceId : null, (alert) => {
+  // Stable callback so sub-effects don't re-attach (and replay history) each render.
+  const handleElderAlert = useCallback((alert: HeartAlert) => {
     setRun(p => ({
       ...p,
       lastEvent: { message: `${alert.condition} (${alert.severity})`, time: new Date() },
       ...(isCriticalHeart(alert) ? { condition: alert.condition } : {}),
     }));
-  });
+  }, []);
+  useElderAlerts(live ? setup.deviceId : null, handleElderAlert);
 
-  // Event feed (mock SMS events; a live feed hooks in here).
+  // Event feed (demo SMS events; the live feed hooks in here).
   useEffect(() => {
+    if (live) return;
     const handle = (e: CustomEvent) => {
       const text = String(e.detail?.message ?? "").toUpperCase();
-      const now = new Date();
+      const nowT = new Date();
       let msg = `Received: ${text}`;
       setRun(p => {
         const n = { ...p };
@@ -209,29 +223,45 @@ export function TabletDashboard() {
         if (text.includes("BEDLIGHTOFF")) n.bedLight = false;
         if (text.includes("FANON")) n.fan = true;
         if (text.includes("FANOFF")) n.fan = false;
-        if (text.includes("BATLOW")) n.battery = 15;
-        if (text.includes("CHARGING")) n.charging = true;
-        if (text.includes("NOTCHARGING")) n.charging = false;
-        if (text.includes("WIFIDOWN")) n.wifi = false;
-        if (text.includes("WIFIUP")) n.wifi = true;
         if (text.includes("TORCHON")) n.torch = true;
         if (text.includes("TORCHOFF")) n.torch = false;
         if (text.includes("SILENT")) n.silent = true;
         if (text.includes("UNMUTE")) n.silent = false;
         if (text.includes("MOVING")) n.moving = true;
         if (text.includes("STATIONARY")) n.moving = false;
-        n.lastEvent = { message: msg, time: now };
+        n.lastEvent = { message: msg, time: nowT };
         return n;
       });
     };
     window.addEventListener("mock-sms", handle as EventListener);
     return () => window.removeEventListener("mock-sms", handle as EventListener);
-  }, []);
+  }, [live]);
 
-  // Eldest-source-wins display values (real feed overrides the simulation).
-  const battery = deviceStatus?.battery ?? run.battery;
+  // Eldest-source-wins display values (real feed overrides the demo).
+  const battery  = deviceStatus?.battery ?? run.battery;
   const charging = deviceStatus?.charging ?? run.charging;
-  const wifiUp = live ? connected : run.wifi;
+  const wifiUp   = live ? connected : run.wifi;
+  // Torch is a REAL persisted state from the elder device (survives restarts).
+  const torch    = live ? (deviceStatus?.torch ?? false) : run.torch;
+
+  // Live position — the elder pushes a fix whenever the caretaker runs LOC.
+  const lat = deviceStatus?.lat;
+  const lng = deviceStatus?.lng;
+  const locAcc = deviceStatus?.accuracy;
+  const locSeen = deviceStatus?.lastSeen;
+
+  // Front-door torch toggle — a small convenience for the wall display.
+  const [toggleBusy, setToggleBusy] = useState(false);
+  const toggleTorch = async () => {
+    if (!live) return;
+    setToggleBusy(true);
+    try {
+      await send(torch ? "TORCHOFF" : "TORCHON");
+    } finally { setToggleBusy(false); }
+  };
+
+  // Only a TRIGGERED condition (or an active SOS) lights the red panel.
+  const alarmed = run.sos || !!run.condition;
 
   if (!setup || showWizard) {
     return (
@@ -248,11 +278,14 @@ export function TabletDashboard() {
       {/* Header */}
       <header className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3">
+          <span className="flex items-center justify-center w-10 h-10 rounded-2xl bg-primary/10 text-primary">
+            <HomeIcon className="w-5 h-5" />
+          </span>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
             <span className="text-[#FF9933]">Home</span>Sync
             <span className="text-[#138808]">.</span>
           </h1>
-          <span className="hidden sm:flex text-muted-foreground text-sm">{setup.room}</span>
+          <span className="hidden sm:flex text-muted-foreground text-[15px]">{setup.room}</span>
         </div>
 
         <div className="flex items-center gap-4 text-muted-foreground">
@@ -267,13 +300,18 @@ export function TabletDashboard() {
             <Battery className={cn("w-4 h-4", battery < 20 ? "text-red-500" : "text-emerald-500")} />
             {battery}%
           </div>
-          <div className="text-xl font-mono">
-            {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          <div className="text-right leading-tight hidden sm:block">
+            <div className="text-xl font-mono font-semibold text-foreground">
+              {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </div>
+            <div className="text-[10px] text-muted-foreground">
+              {now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
+            </div>
           </div>
           <button
             onClick={() => setShowWizard(true)}
             title="Reconfigure"
-            className="w-8 h-8 rounded-full bg-muted flex items-center justify-center active:opacity-70"
+            className="w-8 h-8 rounded-full bg-muted flex items-center justify-center active:opacity-70 cursor-pointer transition-colors duration-150 hover:bg-muted/70"
           >
             <RefreshCcw className="w-4 h-4" />
           </button>
@@ -281,36 +319,77 @@ export function TabletDashboard() {
       </header>
 
       <main className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Safety */}
+        {/* Safety — only lights up when a condition is actually triggered */}
         <section className={cn(
-          "rounded-3xl border p-5 flex flex-col gap-2 col-span-1",
-          run.sos || run.condition ? "border-red-500/50 bg-red-500/10 animate-pulse" : "border-border bg-card"
+          "rounded-3xl border p-5 flex flex-col justify-center gap-2 col-span-1 lg:col-span-1",
+          alarmed ? "border-red-500/60 bg-red-500/10" : "border-border bg-card"
         )}>
           <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium">
             <Shield className="w-4 h-4" /> Safety
           </div>
-          <div className={cn("text-3xl font-bold leading-none mt-1", (run.sos || run.condition) ? "text-red-600" : "text-emerald-600")}>
-            {run.sos ? "SOS ACTIVE" : run.condition ? "CONDITION" : "SECURE"}
+          <div className={cn("text-3xl font-bold leading-none mt-1",
+            alarmed ? "text-red-600 animate-pulse" : "text-emerald-600")}>
+            {alarmed ? "ALERT" : "SECURE"}
           </div>
-          {run.condition && !run.sos && (
-            <div className="mt-1 bg-red-500/15 text-red-600 text-[12px] font-semibold rounded-xl p-2 flex items-center gap-2">
-              <Heart className="w-4 h-4" /> {run.condition}
+          {alarmed && (
+            <div className="mt-1 bg-red-500/15 text-red-600 text-[14px] font-semibold rounded-xl p-2.5 flex items-center gap-2">
+              <Heart className="w-4 h-4 shrink-0" /> {run.condition || (run.sos ? "SOS active" : "Attention needed")}
             </div>
           )}
           {run.fall && (
-            <div className="mt-1 bg-red-500/15 text-red-600 text-[12px] font-semibold rounded-xl p-2 flex items-center gap-2">
+            <div className="mt-1 bg-red-500/15 text-red-600 text-[13px] font-semibold rounded-xl p-2 flex items-center gap-2">
               <Activity className="w-4 h-4" /> Fall detected
             </div>
           )}
-          <div className="text-[12px] text-muted-foreground mt-2">{setup.deviceId}</div>
+          <div className="text-[12px] text-muted-foreground mt-2 font-mono">{setup.deviceId}</div>
         </section>
 
         {/* Vitals */}
-        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-2">
+        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-2 lg:col-span-2">
           <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-3">
-            <Heart className="w-4 h-4" /> Vitals <span className="text-[10px] text-muted-foreground/70">· {live ? "from elder device" : "simulated"}</span>
+            <Heart className="w-4 h-4" /> Vitals
+            <span className="text-[10px] text-muted-foreground/70">· {live ? "live from your loved one" : "demo feed — pair a device"}</span>
           </div>
           <MonitorPanel vitals={vitals} />
+        </section>
+
+        {/* Location — live fix pushed when the caretaker runs LOC */}
+        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 lg:col-span-1">
+          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-2">
+            <Navigation className="w-4 h-4" /> Location
+          </div>
+          {lat != null && lng != null ? (
+            <div>
+              <div className="font-mono text-[20px] font-bold tracking-tight text-foreground leading-tight">
+                {lat.toFixed(5)}, {lng.toFixed(5)}
+              </div>
+              <div className="text-[12px] text-muted-foreground mt-1">
+                {locAcc != null && `±${Math.round(locAcc)} m · `}
+                {locSeen != null && `seen ${new Date(locSeen).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+              </div>
+              <a
+                href={`https://maps.google.com/?q=${lat},${lng}`}
+                target="_blank" rel="noreferrer"
+                className="mt-2 inline-flex items-center gap-1 text-[13px] font-semibold text-blue-600 dark:text-blue-400"
+              >
+                Open map <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          ) : (
+            <p className="text-[13px] text-muted-foreground leading-relaxed">
+              {live && connected
+                ? "No fix yet — tap “Slide to Locate” on the caretaker app and it appears here."
+                : live && !connected
+                ? "Connecting…"
+                : "Pairs to the family caretaker; location appears after Locate."}
+            </p>
+          )}
+          {(lat == null || lng == null) && (
+            <div className="flex items-center gap-2 text-[12px] text-muted-foreground mt-3">
+              <MapPin className="w-3.5 h-3.5" />
+              <span className="font-mono">{live && connected ? "waiting for LOC reply…" : "no device"}</span>
+            </div>
+          )}
         </section>
 
         {/* Home */}
@@ -327,13 +406,27 @@ export function TabletDashboard() {
           </div>
         </section>
 
-        {/* Device */}
-        <section className="rounded-3xl border border-border bg-card p-5 col-span-1">
-          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-3">
-            <Smartphone className="w-4 h-4" /> Elder device
+        {/* Elder device — torch is wired to the real persisted state */}
+        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 lg:col-span-2">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium">
+              <Smartphone className="w-4 h-4" /> Elder device
+            </div>
+            {live && (
+              <Button
+                onClick={toggleTorch}
+                disabled={toggleBusy}
+                variant={torch ? "default" : "outline"}
+                size="sm"
+                className="rounded-xl h-9 gap-2 text-[13px]"
+              >
+                <Zap className={cn("w-4 h-4", torch && "fill-current")} />
+                {torch ? "Turn torch OFF" : "Turn torch ON"}
+              </Button>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <ToggleTile active={run.torch}  icon={<Power className="w-5 h-5" />} label="Torch" accent="text-yellow-500" />
+            <ToggleTile active={torch}    icon={<Power className="w-5 h-5" />} label="Torch" accent="text-yellow-500" />
             <ToggleTile active={!run.silent} icon={run.silent ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
               label={run.silent ? "Silent" : "Ringing"} accent="text-blue-500" />
             <ToggleTile active={charging} icon={<Zap className="w-5 h-5" />} label={charging ? "Charging" : "On battery"} accent="text-emerald-500" />
@@ -341,8 +434,8 @@ export function TabletDashboard() {
           </div>
         </section>
 
-        {/* Activity + location */}
-        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-2">
+        {/* Activity + status */}
+        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-2 lg:col-span-3">
           <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-3">
             <Clock className="w-4 h-4" /> Activity
           </div>
@@ -358,9 +451,14 @@ export function TabletDashboard() {
             <p className="text-[13px] text-muted-foreground">No events yet. Watch this space for alerts and replies.</p>
           )}
 
-          <div className="border-t border-border mt-4 pt-3 mt-3 flex items-center gap-3">
+          <div className={cn("border-t border-border mt-4 pt-3 flex items-center gap-3",
+            live && (lat == null || lng == null) && "opacity-90")}>
             <MapPin className="w-4 h-4 text-muted-foreground" />
-            <div className="text-[14px] text-foreground">Home — 123 Main St</div>
+            <div className="text-[14px] text-foreground">
+              {lat != null && lng != null
+                ? `Live position ${lat.toFixed(4)}, ${lng.toFixed(4)}`
+                : "Home — position appears after the caretaker's Locate"}
+            </div>
             <span className={cn(
               "text-[11px] font-semibold px-2.5 py-1 rounded-full",
               run.moving ? "bg-blue-500/10 text-blue-600" : "bg-muted text-muted-foreground"
@@ -370,8 +468,8 @@ export function TabletDashboard() {
           </div>
         </section>
 
-        {/* Conditions / heartbeat strip */}
-        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-1 flex flex-col justify-center gap-3">
+        {/* Status strip */}
+        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 flex flex-col justify-center gap-3">
           <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium">
             <CheckCircle2 className="w-4 h-4" /> Status
           </div>
@@ -389,6 +487,9 @@ export function TabletDashboard() {
     </div>
   );
 }
+
+/** Alerted = ONLY a triggered condition / active SOS. The demo feed never
+ *  crosses thresholds, and the live feed uses the elder's own severity. */
 
 // ── Monitor-style vitals panel ──────────────────────────────────────
 

@@ -42,19 +42,25 @@ fi
 ok "Android SDK at $ANDROID_HOME"
 ok "Java: $(java -version 2>&1 | head -1)"
 
+# Fresh output dir — never let a partially-failed build leave stale APKs that
+# look like current artifacts.
+rm -rf "$OUT"
 mkdir -p "$OUT"
 
 # ── Repair helpers (so the script is safe on a fresh clone) ─────────────
 ensure_gradle_wrapper() {
   # elder-helper historically lost its wrapper jar/scripts; Gradle can't run without them.
+  # Restore the whole wrapper (jar + scripts + version + JDK21 daemon pin) from caretaker.
   local proj="$1"
   if [ ! -f "$proj/gradle/wrapper/gradle-wrapper.jar" ] || [ ! -x "$proj/gradlew" ]; then
     note "restoring Gradle wrapper for $(basename "$proj") from caretaker android/"
-    mkdir -p "$proj/gradle/wrapper"
-    cp "$CAR/android/gradle/wrapper/gradle-wrapper.jar" "$proj/gradle/wrapper/gradle-wrapper.jar" 2>/dev/null || true
-    cp "$CAR/android/gradlew" "$proj/gradlew" 2>/dev/null || true
-    cp "$CAR/android/gradlew.bat" "$proj/gradlew.bat" 2>/dev/null || true
-    chmod +x "$proj/gradlew" 2>/dev/null || true
+    mkdir -p "$proj/gradle/wrapper" "$proj/gradle"
+    cp "$CAR/android/gradle/wrapper/gradle-wrapper.jar"        "$proj/gradle/wrapper/gradle-wrapper.jar"
+    cp "$CAR/android/gradle/wrapper/gradle-wrapper.properties" "$proj/gradle/wrapper/gradle-wrapper.properties"
+    cp "$CAR/android/gradle/gradle-daemon-jvm.properties"       "$proj/gradle/gradle-daemon-jvm.properties"
+    cp "$CAR/android/gradlew"     "$proj/gradlew"
+    cp "$CAR/android/gradlew.bat" "$proj/gradlew.bat"
+    chmod +x "$proj/gradlew"
   fi
 }
 
@@ -77,7 +83,8 @@ ensure_tablet_android() {
 
 # ── 1. Caretaker web (static export → out/) ─────────────────────────────
 log "Building caretaker web app (static export)"
-if [ -n "${NEXT_PUBLIC_FIREBASE_DATABASE_URL:-}" ] || [ -f "$CAR/.env.local" ]; then
+if { [ -n "${NEXT_PUBLIC_FIREBASE_DATABASE_URL:-}" ] && [ "$NEXT_PUBLIC_FIREBASE_DATABASE_URL" != "None" ]; } \
+   || grep -qE '^NEXT_PUBLIC_FIREBASE_DATABASE_URL=.+m?[-_a-zA-Z0-9]+' "$CAR/.env.local" 2>/dev/null; then
   note "Firebase env present → APKs will carry the real elder feed config"
 else
   note "No Firebase env vars → APKs run in SIMULATION mode (no .env.local found)"
@@ -95,6 +102,14 @@ ok "caretaker → $OUT/home-sync-caretaker-debug.apk"
 
 # ── 3. Elder APK (native) ───────────────────────────────────────────────
 log "Building elder APK (elder-helper, native)"
+# The elder project applies com.google.gms.google-services unconditionally, so
+# a missing google-services.json fails the whole build. Fail fast with guidance.
+if [ ! -f "$CAR/elder-helper/app/google-services.json" ]; then
+  echo "ERROR: $CAR/elder-helper/app/google-services.json is missing." >&2
+  echo "  Copy the example and fill in your Firebase project values:" >&2
+  echo "  cp elder-helper/app/google-services.json.example elder-helper/app/google-services.json" >&2
+  exit 1
+fi
 ensure_gradle_wrapper "$CAR/elder-helper"
 (cd "$CAR/elder-helper" && ./gradlew assembleDebug "${GRADLE_OPTS[@]}")
 cp "$CAR/elder-helper/$DEBUG_APK" "$OUT/home-sync-elder-debug.apk"

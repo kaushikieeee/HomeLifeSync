@@ -7,11 +7,10 @@ import { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'com.homelifesync.tablet',
   appName: 'HomeSync Tablet',
-  webDir: '../HomeLifeSync-Caretaker/out',
+  webDir: './tablet-web',
   server: {
     androidScheme: 'https',
-    cleartext: true,
-    url: 'https://localhost/tablet/'
+    cleartext: true
   },
   android: {
     allowMixedContent: true,

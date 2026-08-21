@@ -1,0 +1,7 @@
+1:"$Sreact.fragment"
+2:I[52220,["/_next/static/chunks/62f9315001c5afc4.js","/_next/static/chunks/18405b258ce2eab4.js","/_next/static/chunks/e3afc90f047b91db.js"],"ViewportBoundary"]
+4:I[52220,["/_next/static/chunks/62f9315001c5afc4.js","/_next/static/chunks/18405b258ce2eab4.js","/_next/static/chunks/e3afc90f047b91db.js"],"MetadataBoundary"]
+5:"$Sreact.suspense"
+0:{"buildId":"J-2pK9TYzb53jI0Wq5G6B","rsc":["$","$1","h",{"children":[["$","meta",null,{"name":"robots","content":"noindex"}],["$","$L2",null,{"children":"$@3"}],["$","div",null,{"hidden":true,"children":["$","$L4",null,{"children":["$","$5",null,{"name":"Next.Metadata","children":"$@6"}]}]}],null]}],"loading":null,"isPartial":false}
+3:[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]
+6:[["$","title","0",{"children":"HomeSync Caretaker"}],["$","meta","1",{"name":"description","content":"Elderly care monitoring dashboard"}]]

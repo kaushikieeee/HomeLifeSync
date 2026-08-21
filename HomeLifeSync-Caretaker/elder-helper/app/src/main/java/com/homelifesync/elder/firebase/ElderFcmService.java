@@ -63,15 +63,4 @@ public class ElderFcmService extends FirebaseMessagingService {
 
         ServiceStarter.startCommandService(this, svc);
     }
-
-    /**
-     * Called whenever FCM rotates this device's registration token.
-     * We save the new token to Firebase DB so the caretaker app can
-     * always push to the correct token.
-     */
-    @Override
-    public void onNewToken(String token) {
-        Log.d(TAG, "FCM token refreshed: " + token);
-        FirebaseRepository.get(this).saveOwnFcmToken(token);
-    }
 }

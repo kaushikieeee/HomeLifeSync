@@ -295,7 +295,15 @@ public class HealthHandler {
 
     private static double round1(double v) { return Math.round(v * 10.0) / 10.0; }
 
+    /** Last snapshot actually written (rounded, matches what is stored). */
+    private static volatile String lastPushedKey = null;
+
     private void pushStatus() {
+        String key = round1(currentHr) + "|" + round1(currentSpo2) + "|" + round1(currentTemp)
+            + "|" + round1(currentRR) + "|" + round1(currentSys) + "|" + round1(currentDia)
+            + "|" + round1(currentGlucose) + "|" + currentCondition + "|" + currentSeverity;
+        if (key.equals(lastPushedKey)) return;
+        lastPushedKey = key;
         Map<String, Object> m = new java.util.HashMap<>();
         m.put("heartRate",      currentHr);
         m.put("spo2",           currentSpo2);

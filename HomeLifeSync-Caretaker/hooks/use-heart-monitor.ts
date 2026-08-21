@@ -14,22 +14,49 @@ import { HeartAlert, isCriticalHeart } from '@/lib/commands';
  *   walk around the active scenario's targets, every 2 s.
  * - Runs the SAME detection engine as the elder device (see lib/health.ts,
  *   spec in HEALTH_MONITORING.md).
+ * - Random health events fire spontaneously while idle (every ~1-3 min),
+ *   each lasting 18-38 s before vitals auto-recover — so alerts can arrive
+ *   without a manual simulation.
  * - A confirmed WARNING/CRITICAL detection raises ONE loud HeartAlert per
  *   episode (re-armed only after vitals return to normal). Elder-device
  *   alerts arriving via Firebase are injected through pushElderAlert and
  *   share the same list, so the caretaker warns loudly either way.
  */
+
+// Random spontaneous events (weighted + hard limit so it never spams).
+// Critical entries only appear rarely — most are mild WARNING drifts.
+const RANDOM_EVENTS: { target: Partial<Vitals>; variance?: number; critical?: boolean }[] = [
+  { target: { heartRate: 128 }, variance: 4 },
+  { target: { heartRate: 46 }, variance: 2 },
+  { target: { spo2: 92 } },
+  { target: { temperature: 38.4 }, variance: 0.05 },
+  { target: { glucose: 190 } },
+  { target: { systolic: 165, diastolic: 102 } },
+  { target: { respiratoryRate: 26 } },
+  { target: { heartRate: 104 }, variance: 22 },
+  { target: { heartRate: 136 }, variance: 6, critical: true },
+  { target: { spo2: 86 }, critical: true },
+  { target: { temperature: 39.6 }, critical: true },
+];
+
+const RANDOM_TICK_CHANCE   = 0.02;   // ~1 event per 100 s while idle
+const RANDOM_COOLDOWN_MS   = 60_000; // at least 60 s between spontaneous events
+const RANDOM_FIRST_DELAY   = 90_000; // nothing before the first minute
+const RANDOM_EVENT_DURATION = 18_000 + 20_000; // 18-38 s drift window
+
 export function useHealthMonitor() {
   const [vitals, setVitals] = useState<Vitals>({ ...NORMAL_VITALS });
   const [externalVitals, setExternalVitals] = useState<Vitals | null>(null);
   const [detection, setDetection] = useState<Detection | null>(null);
   const [alerts, setAlerts] = useState<HeartAlert[]>([]);
 
-  const engineRef    = useRef(createHealthEngine());
-  const targetRef    = useRef<Partial<Vitals>>({});
-  const varianceRef  = useRef(0);
-  const alertsRef    = useRef<HeartAlert[]>([]);
-  const armedEpisode = useRef(true);
+  const engineRef        = useRef(createHealthEngine());
+  const targetRef        = useRef<Partial<Vitals>>({});
+  const varianceRef      = useRef(0);
+  const alertsRef        = useRef<HeartAlert[]>([]);
+  const armedEpisode     = useRef(true);
+  const randomEventRef   = useRef<{ target: Partial<Vitals>; variance: number; endsAt: number } | null>(null);
+  const lastRandomRef    = useRef(Date.now()); // seeded so the first event waits
 
   /**
    * Point the monitor at an external (live) vitals feed — e.g. the SAME
@@ -45,13 +72,37 @@ export function useHealthMonitor() {
   useEffect(() => {
     if (externalVitals) return;
     const id = setInterval(() => {
+      const now = Date.now();
+
+      // Spontaneous health event scheduler (idle-only, auto-recovers)
+      const re = randomEventRef.current;
+      if (re && now >= re.endsAt) {
+        randomEventRef.current = null;
+        lastRandomRef.current = now;
+      } else if (!randomEventRef.current
+          && Object.keys(targetRef.current).length === 0
+          && now - lastRandomRef.current > RANDOM_COOLDOWN_MS
+          && now > RANDOM_FIRST_DELAY
+          && Math.random() < RANDOM_TICK_CHANCE) {
+        const ev = RANDOM_EVENTS[Math.floor(Math.random() * RANDOM_EVENTS.length)];
+        randomEventRef.current = {
+          target:   ev.target,
+          variance: ev.variance ?? 0,
+          endsAt:   now + RANDOM_EVENT_DURATION * (0.9 + Math.random() * 0.2),
+        };
+      }
+
       setVitals(prev => {
-        const t = targetRef.current;
+        const active = randomEventRef.current && now < randomEventRef.current.endsAt
+          ? randomEventRef.current
+          : null;
+        const t = active ? active.target : targetRef.current;
+        const variance = active ? active.variance : varianceRef.current;
         const target = (name: keyof Vitals) => t[name] ?? NORMAL_VITALS[name];
         const walk = (cur: number, tg: number, spread: number) => {
           // High-variance scenario (arrhythmia / AFib): bounce hard around target
-          if (varianceRef.current > 0 && Math.random() < 0.55) {
-            return Math.round((tg + (Math.random() - 0.5) * varianceRef.current * 2) * 10) / 10;
+          if (variance > 0 && Math.random() < 0.55) {
+            return Math.round((tg + (Math.random() - 0.5) * variance * 2) * 10) / 10;
           }
           let n = cur + (Math.random() - 0.5) * 2 * spread;
           const lo = tg - 5, hi = tg + 5;
@@ -113,7 +164,7 @@ export function useHealthMonitor() {
   const pushAlert = useCallback((alert: HeartAlert) => {
     const dup = alertsRef.current.some(a =>
       a.condition === alert.condition && a.severity === alert.severity &&
-      Math.abs(a.ts - alert.ts) < 20_000);
+      Math.abs(a.ts - alert.ts) < 45_000);
     if (dup) return;
     const next = [...alertsRef.current, alert];
     alertsRef.current = next;
@@ -128,6 +179,7 @@ export function useHealthMonitor() {
     armedEpisode.current = true;
     varianceRef.current = s.variance ?? 0;
     targetRef.current   = { ...s.target };
+    randomEventRef.current = null;
 
     if (s.cmd === 'HRNORMAL') {
       targetRef.current = {};

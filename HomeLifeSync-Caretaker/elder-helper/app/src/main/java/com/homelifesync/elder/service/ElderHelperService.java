@@ -27,6 +27,7 @@ import com.homelifesync.elder.commands.SensorHandler;
 import com.homelifesync.elder.commands.SystemHandler;
 import com.homelifesync.elder.firebase.FirebaseRepository;
 import com.homelifesync.elder.util.NotificationHelper;
+import com.homelifesync.elder.util.PrefsHelper;
 import com.homelifesync.elder.util.SmsSender;
 
 import java.util.concurrent.ExecutorService;
@@ -60,6 +61,24 @@ public class ElderHelperService extends Service {
     public static volatile boolean isRunning = false;
 
     private static final long HEARTBEAT_INTERVAL_MS = 60_000;
+
+    // ── Cross-channel command dedupe ──────────────────────────────────
+    // The DB listener is PRIMARY; an FCM data message with the same cmdId
+    // would otherwise execute the same command a second time (double alarms,
+    // duplicate alerts). Keep a small ring of recently-handled ids.
+    private static final java.util.Set<String> recentCmdIds =
+        java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<>());
+
+    private static boolean alreadyHandled(String cmdId) {
+        if (cmdId == null || cmdId.isEmpty()) return false;
+        synchronized (recentCmdIds) {
+            if (!recentCmdIds.add(cmdId)) return true;
+            if (recentCmdIds.size() > 64) {
+                recentCmdIds.remove(recentCmdIds.iterator().next());
+            }
+            return false;
+        }
+    }
 
     private ExecutorService    executor;
     private FirebaseRepository firebase;
@@ -123,9 +142,15 @@ public class ElderHelperService extends Service {
         NotificationHelper.createChannel(this);
         startForeground(Constants.NOTIF_ID, NotificationHelper.buildNotification(this));
 
-        // Save FCM token so caretaker can read it
-        firebase.refreshAndSaveFcmToken();
         sendHeartbeat();
+
+        // Re-publish the pairing code so a tablet sees a fresh timestamp
+        // (5-minute validity) even if the app UI was never opened.
+        try {
+            firebase.writePairingCode(new PrefsHelper(this).getOrCreatePairingCode());
+        } catch (Exception ignored) {
+            Log.e(TAG, "Pairing publish skipped", ignored);
+        }
 
         // Keep /status.lastSeen fresh so the caretaker dashboard stays ONLINE
         heartbeatHandler.removeCallbacks(heartbeatTask);
@@ -203,6 +228,12 @@ public class ElderHelperService extends Service {
 
     private void dispatch(String cmd, String cmdId, String sender, String channel) {
         Log.d(TAG, "[" + channel.toUpperCase() + "] " + cmd + " id=" + cmdId);
+        // Skip a command that already ran via another channel (e.g. the
+        // same cmdId arriving over BOTH the DB listener and FCM).
+        if (alreadyHandled(cmdId)) {
+            Log.d(TAG, "Command " + cmdId + " already handled — skipping duplicate.");
+            return;
+        }
         // Every reply / handler run counts as "device activity" for NOINACT.
         BehaviorHandler.touch();
 

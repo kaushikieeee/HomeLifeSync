@@ -2,56 +2,75 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { HeartHandshake, UserCircle, Smartphone, CheckCircle2, ArrowRight, ArrowLeft, Baby, Heart, Stethoscope, User } from 'lucide-react';
+import { HeartHandshake, Smartphone, CheckCircle2, ArrowRight, ArrowLeft, KeyRound, Loader2 } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from '@/lib/utils';
+import { useHaptic, useSelectionHaptic, ImpactStyle } from '@/hooks/use-haptic';
+import { verifyPairing, DEVICE_ID_RE, PAIRING_CODE_RE } from '@/lib/pairing';
 
 export type CaretakerProfile = {
-  role: string;
   name: string;
 };
-
-const ROLES = [
-  { id: 'child',      label: 'Child',      icon: <Baby className="w-5 h-5" /> },
-  { id: 'grandchild', label: 'Grandchild', icon: <Heart className="w-5 h-5" /> },
-  { id: 'caregiver',  label: 'Caregiver',  icon: <HeartHandshake className="w-5 h-5" /> },
-  { id: 'nurse',      label: 'Nurse',      icon: <Stethoscope className="w-5 h-5" /> },
-  { id: 'other',      label: 'Other',      icon: <User className="w-5 h-5" /> },
-];
 
 type Props = {
   onComplete: (deviceId: string, profile: CaretakerProfile) => void;
 };
 
 const STEPS = [
-  { key: 'welcome',  icon: <HeartHandshake className="w-5 h-5" />, title: 'Welcome' },
-  { key: 'role',     icon: <UserCircle   className="w-5 h-5" />, title: 'Your role' },
-  { key: 'device',   icon: <Smartphone   className="w-5 h-5" />, title: 'Connect' },
-  { key: 'done',     icon: <CheckCircle2 className="w-5 h-5" />, title: 'All set' },
+  { key: 'welcome', icon: <HeartHandshake className="w-5 h-5" />, title: 'Welcome' },
+  { key: 'link',    icon: <Smartphone   className="w-5 h-5" />, title: 'Link caretaker' },
+  { key: 'done',    icon: <CheckCircle2 className="w-5 h-5" />, title: 'All set' },
 ];
 
-const DEVICE_ID_RE = /^[0-9a-fA-F]{8}$/;
-
 export function ConnectWizard({ onComplete }: Props) {
+  const haptic = useHaptic();
+  const selectionHaptic = useSelectionHaptic();
+
   const [step,      setStep]      = useState(0);
-  const [role,      setRole]      = useState('');
   const [name,      setName]      = useState('');
   const [deviceId,  setDeviceId]  = useState('');
+  const [code,      setCode]      = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [verifyErr, setVerifyErr] = useState<string | null>(null);
   const [saving,    setSaving]    = useState(false);
 
   const deviceOk = DEVICE_ID_RE.test(deviceId.trim());
+  const codeOk   = PAIRING_CODE_RE.test(code.trim());
 
-  const canNext = step === 0 || step === 3 ||
-    (step === 1 && role !== '') || (step === 2 && deviceOk);
+  const canNext =
+    step === 0 ? name.trim().length > 0
+    : step === 1 ? deviceOk && codeOk
+    : true;
 
-  const next = () => setStep(s => Math.min(s + 1, STEPS.length - 1));
-  const back = () => setStep(s => Math.max(s - 1, 0));
+  const next = async () => {
+    void selectionHaptic();
+    if (step === 1) {
+      // Link is the code-verified step — don't advance past it without proof.
+      setVerifying(true);
+      setVerifyErr(null);
+      const result = await verifyPairing(deviceId, code);
+      setVerifying(false);
+      if (!result.ok) {
+        setVerifyErr(result.reason);
+        void haptic(ImpactStyle.Light);
+        return;
+      }
+      void haptic(ImpactStyle.Light);
+    }
+    setStep(s => Math.min(s + 1, STEPS.length - 1));
+  };
+
+  const back = () => {
+    void selectionHaptic();
+    setStep(s => Math.max(s - 1, 0));
+  };
 
   const finish = () => {
     if (saving) return;
     setSaving(true);
-    setTimeout(() => onComplete(deviceId.trim(), { role, name: name.trim() }), 350);
+    void haptic(ImpactStyle.Light);
+    setTimeout(() => onComplete(deviceId.trim(), { name: name.trim() }), 350);
   };
 
   return (
@@ -59,128 +78,153 @@ export function ConnectWizard({ onComplete }: Props) {
       <div className="w-full max-w-md">
 
         {/* Brand */}
-        <div className="text-center mb-8">
+        <motion.div
+          initial={{ opacity: 0, y: -12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: 'easeOut' }}
+          className="text-center mb-8"
+        >
           <h1 className="text-[34px] font-bold tracking-tight text-foreground">
             <span className="text-[#FF9933]">Home</span>Sync
             <span className="text-[#138808]">.</span>
           </h1>
-          <p className="text-muted-foreground mt-1 text-sm">Caretaker setup</p>
-        </div>
+          <p className="text-muted-foreground mt-1 text-sm">Link caretaker</p>
+        </motion.div>
 
         {/* Step indicator */}
         <div className="flex items-center justify-center gap-2 mb-6">
           {STEPS.map((s, i) => (
-            <div key={s.key} className="flex items-center gap-2">
-              <div className={cn(
-                "w-8 h-8 rounded-full flex items-center justify-center border transition-colors",
-                i === step
-                  ? "bg-primary border-primary text-primary-foreground"
-                  : i < step
-                    ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-500"
-                    : "border-border text-muted-foreground"
-              )}>
-                {s.icon}
-              </div>
+            <motion.div key={s.key} className="flex items-center gap-2" layout>
+              <motion.div
+                animate={{ scale: i === step ? 1 : 0.9 }}
+                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                className={cn(
+                  "w-8 h-8 rounded-full flex items-center justify-center border transition-colors",
+                  i === step
+                    ? "bg-primary border-primary text-primary-foreground shadow-md shadow-primary/25"
+                    : i < step
+                      ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-500"
+                      : "border-border text-muted-foreground"
+                )}
+              >
+                {i < step ? <CheckCircle2 className="w-4 h-4" /> : s.icon}
+              </motion.div>
               {i < STEPS.length - 1 && (
-                <div className={cn("w-6 h-px", i < step ? "bg-emerald-500/60" : "bg-border")} />
+                <motion.div
+                  animate={{ backgroundColor: i < step ? '#34d399' : 'rgba(0,0,0,0.08)' }}
+                  className="w-6 h-px rounded"
+                />
               )}
-            </div>
+            </motion.div>
           ))}
         </div>
 
-        <div className="bg-card p-6 rounded-[24px] shadow-sm border border-border min-h-[340px] flex flex-col">
+        <motion.div
+          initial={{ opacity: 0, y: 10, scale: 0.995 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ type: 'spring', stiffness: 480, damping: 34 }}
+          className="bg-card p-6 rounded-[24px] shadow-sm border border-border min-h-[340px] flex flex-col"
+        >
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={step}
-              initial={{ opacity: 0, x: 16 }}
+              initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -16 }}
-              transition={{ duration: 0.16, ease: 'easeOut' }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 36 }}
               className="flex-1 flex flex-col"
             >
               {step === 0 && (
-                <div className="flex-1 flex flex-col justify-center text-center">
-                  <HeartHandshake className="w-12 h-12 text-primary mx-auto mb-4" />
-                  <h2 className="text-xl font-bold tracking-tight mb-2">Stay close, even from afar</h2>
-                  <p className="text-muted-foreground text-sm leading-relaxed">
-                    Monitor your loved one's location, vitals and safety — and reach
+                <div className="flex-1 flex flex-col justify-center">
+                  <motion.div
+                    initial={{ scale: 0.6, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: 'spring', stiffness: 320, damping: 22, delay: 0.05 }}
+                    className="w-14 h-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto mb-4"
+                  >
+                    <HeartHandshake className="w-7 h-7" />
+                  </motion.div>
+                  <h2 className="text-xl font-bold tracking-tight mb-1 text-center">Stay close, even from afar</h2>
+                  <p className="text-muted-foreground text-sm leading-relaxed text-center mb-6">
+                    Monitor your loved one&apos;s location, vitals and safety — and reach
                     them with a tap. Setup takes under a minute.
                   </p>
+                  <label className="text-[12px] text-muted-foreground mb-1 block">Your name</label>
+                  <Input
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    placeholder="e.g. Priya"
+                    autoFocus
+                    className="h-12 rounded-xl text-center text-lg"
+                  />
                 </div>
               )}
 
               {step === 1 && (
                 <div className="flex-1">
-                  <h2 className="text-lg font-bold tracking-tight mb-1">Who are you?</h2>
-                  <p className="text-muted-foreground text-sm mb-5">So the dashboard can greet you and label alerts.</p>
-                  <div className="grid grid-cols-3 gap-2 mb-5">
-                    {ROLES.map(r => (
-                      <button
-                        key={r.id}
-                        onClick={() => setRole(r.label)}
-                        className={cn(
-                          "h-16 rounded-xl border flex flex-col items-center justify-center gap-1 text-[13px] font-medium active:scale-[0.97] transition-all duration-150 cursor-pointer",
-                          role === r.label
-                            ? "border-primary bg-primary/10 text-primary"
-                            : "border-border bg-muted/30 text-muted-foreground hover:bg-muted hover:border-primary/30"
-                        )}
-                      >
-                        <span className={cn(role === r.label && "text-primary", role !== r.label && "text-muted-foreground")}>{r.icon}</span>
-                        {r.label}
-                      </button>
-                    ))}
-                  </div>
-                  <label className="text-[12px] text-muted-foreground mb-1 block">Your name (optional)</label>
+                  <h2 className="text-lg font-bold tracking-tight mb-1">Link caretaker</h2>
+                  <p className="text-muted-foreground text-sm mb-5">
+                    Ask your loved one to open HomeSync on their phone — you need
+                    the Device&nbsp;ID and the temporary 4-digit pairing code it shows.
+                  </p>
                   <Input
-                    value={name}
-                    onChange={e => setName(e.target.value)}
-                    placeholder="e.g. Priya"
-                    className="h-12 rounded-xl"
+                    placeholder="Device ID — e.g. a1b2c3d4"
+                    value={deviceId}
+                    onChange={e => { setDeviceId(e.target.value); setVerifyErr(null); }}
+                    className={cn(
+                      "text-center text-lg h-14 rounded-xl font-mono tracking-widest mb-3",
+                      deviceId.trim() && !deviceOk && "border-red-400 text-red-500 focus-visible:ring-red-400"
+                    )}
                   />
+                  <Input
+                    placeholder="Pairing code — 4 digits"
+                    value={code}
+                    onChange={e => { setCode(e.target.value.replace(/\D/g, '').slice(0, 4)); setVerifyErr(null); }}
+                    inputMode="numeric"
+                    className={cn(
+                      "text-center text-lg h-14 rounded-xl font-mono tracking-[0.5em]",
+                      code.trim() && !codeOk && "border-red-400 text-red-500 focus-visible:ring-red-400"
+                    )}
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-2 text-center">
+                    The code is temporary (valid 5 minutes) — tap <span className="font-medium">New code</span> on the
+                    elder&apos;s app if it expired.
+                  </p>
+                  <AnimatePresence>
+                    {verifyErr && (
+                      <motion.p
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.18 }}
+                        className="text-[12px] text-red-500 mt-3 bg-red-50 rounded-xl px-3 py-2.5 leading-relaxed"
+                      >
+                        {verifyErr}
+                      </motion.p>
+                    )}
+                  </AnimatePresence>
                 </div>
               )}
 
               {step === 2 && (
-                <div className="flex-1">
-                  <h2 className="text-lg font-bold tracking-tight mb-1">Connect to their device</h2>
-                  <p className="text-muted-foreground text-sm mb-5">
-                    Ask your loved one to open HomeSync on their phone and read the
-                    Device&nbsp;ID — it's an 8-character code they can tap to copy.
-                  </p>
-                  <Input
-                    placeholder="e.g. a1b2c3d4"
-                    value={deviceId}
-                    onChange={e => setDeviceId(e.target.value)}
-                    className={cn(
-                      "text-center text-lg h-14 rounded-xl font-mono tracking-widest",
-                      deviceId.trim() && !deviceOk && "border-red-400 text-red-500 focus-visible:ring-red-400"
-                    )}
-                    autoFocus={step === 2}
-                  />
-                  {deviceId.trim() && !deviceOk && (
-                    <p className="text-[11px] text-red-500 mt-2 text-center">
-                      Device ID must be exactly 8 characters (letters a-f and numbers 0-9). Check for typos like an extra digit.
-                    </p>
-                  )}
-                  <p className="text-[11px] text-muted-foreground mt-2 text-center">
-                    Commands are sent over Firebase — free and instant. No pairing codes, no phone number needed.
-                  </p>
-                </div>
-              )}
-
-              {step === 3 && (
                 <div className="flex-1 flex flex-col justify-center text-center">
-                  <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-4" />
-                  <h2 className="text-xl font-bold tracking-tight mb-1">You're connected</h2>
+                  <motion.div
+                    initial={{ scale: 0.5, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 18 }}
+                    className="w-14 h-14 rounded-full bg-emerald-500/15 text-emerald-500 flex items-center justify-center mx-auto mb-4"
+                  >
+                    <CheckCircle2 className="w-8 h-8" />
+                  </motion.div>
+                  <h2 className="text-xl font-bold tracking-tight mb-1">You&apos;re connected</h2>
                   <p className="text-muted-foreground text-sm mb-5">
-                    Device <span className="font-mono font-semibold text-foreground">{deviceId.trim()}</span>
-                    {role && <> · as <span className="font-medium text-foreground">{role}</span></>}
+                    Linked to <span className="font-mono font-semibold text-foreground">{deviceId.trim()}</span>
                     {name && <> · {name}</>}
                   </p>
                   <Button
                     onClick={finish}
                     disabled={saving}
-                    className="w-full h-12 rounded-xl bg-primary text-lg font-semibold"
+                    className="w-full h-12 rounded-xl bg-primary text-lg font-semibold active:scale-[0.98] transition-transform"
                   >
                     {saving ? 'Opening dashboard…' : 'Open dashboard'}
                   </Button>
@@ -191,21 +235,32 @@ export function ConnectWizard({ onComplete }: Props) {
 
           {/* Nav */}
           <div className="flex items-center justify-between mt-6 pt-4 border-t border-border">
-            <Button variant="ghost" onClick={back} disabled={step === 0} className="gap-1 rounded-xl">
+            <Button
+              variant="ghost"
+              onClick={back}
+              disabled={step === 0}
+              className="gap-1 rounded-xl active:scale-95 transition-transform"
+            >
               <ArrowLeft className="w-4 h-4" /> Back
             </Button>
-            {step < 3 && (
-              <Button onClick={next} disabled={!canNext} className="gap-1 rounded-xl">
-                Continue <ArrowRight className="w-4 h-4" />
+            {step < 2 && (
+              <Button
+                onClick={() => void next()}
+                disabled={!canNext || verifying}
+                className="gap-1 rounded-xl active:scale-95 transition-transform"
+              >
+                {verifying
+                  ? (<><Loader2 className="w-4 h-4 animate-spin" /> Verifying…</>)
+                  : (<>{step === 1 ? <KeyRound className="w-4 h-4" /> : null} Continue <ArrowRight className="w-4 h-4" /></>)}
               </Button>
             )}
-            {step === 3 && (
-              <Button onClick={finish} disabled={saving} className="gap-1 rounded-xl">
+            {step === 2 && (
+              <Button onClick={finish} disabled={saving} className="gap-1 rounded-xl active:scale-95 transition-transform">
                 Finish
               </Button>
             )}
           </div>
-        </div>
+        </motion.div>
       </div>
     </div>
   );

@@ -1,267 +1,473 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import {
-  Battery, Wifi, MapPin, Heart, Shield, Clock, Lock, Unlock, Zap,
-  Thermometer, Moon, Sun, Smartphone, CheckCircle2, Wind,
-  Volume2, VolumeX, Power, Tv, ArrowRight, Bell, Activity, RefreshCcw,
-  Navigation, ExternalLink, Home as HomeIcon,
+  House, Smartphone, HeartPulse, Heart, Droplets, Thermometer, Wind,
+  Activity, Gauge, Battery, Wifi, Clock, MapPin, ExternalLink, RefreshCcw,
+  ShieldCheck, ShieldAlert, Sunrise, CloudSun, MonitorSmartphone,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { NORMAL_VITALS, Vitals } from "@/lib/health";
 import { useFirebaseDevice } from "@/hooks/use-firebase-device";
 import { useElderAlerts } from "@/hooks/use-elder-alerts";
+import { useHaptic, useSelectionHaptic } from "@/hooks/use-haptic";
+import { verifyPairing, DEVICE_ID_RE, PAIRING_CODE_RE } from "@/lib/pairing";
 import { firebaseConfigured } from "@/lib/firebase";
-import { isCriticalHeart, type HeartAlert } from "@/lib/commands";
+import { NORMAL_VITALS } from "@/lib/health";
+import type { HeartAlert } from "@/lib/commands";
 
-// ── Runtime state (values the elder app hasn't pushed yet) ────────────
-
-interface RuntimeState {
-  sos: boolean;
-  fall: boolean;
-  doorLocked: boolean;
-  livingLight: boolean;
-  bedLight: boolean;
-  fan: boolean;
-  roomTemp: number;
-  moving: boolean;
-  battery: number;
-  charging: boolean;
-  wifi: boolean;
-  torch: boolean;
-  silent: boolean;
-  condition: string;
-  lastEvent: { message: string; time: Date } | null;
-}
-
-const INITIAL: RuntimeState = {
-  sos: false, fall: false, doorLocked: true, livingLight: false,
-  bedLight: false, fan: false, roomTemp: 24, moving: false, battery: 85,
-  charging: false, wifi: true, torch: false, silent: false, condition: "",
-  lastEvent: null,
-};
-
-function rnd(spread: number) { return (Math.random() - 0.5) * 2 * spread; }
-function clamp(v: number, lo: number, hi: number) { return Math.round(Math.min(hi, Math.max(lo, v)) * 10) / 10; }
+// ── Setup (first run / reconfigure) ────────────────────────────────────
 
 type Setup = { room: string; deviceId: string };
 const SETUP_KEY = "tablet_setup";
-const DEVICE_ID_RE = /^[0-9a-fA-F]{8}$/;
-
-// ── Setup wizard (first run / reconfigure) ────────────────────────────
 
 function SetupWizard({ initial, onSave, onCancel }: {
   initial: Setup | null;
   onSave: (s: Setup) => void;
   onCancel?: () => void;
 }) {
+  const haptic = useHaptic();
   const [room, setRoom] = useState(initial?.room ?? "");
   const [deviceId, setDeviceId] = useState(initial?.deviceId ?? "");
+  const [code, setCode] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verifyErr, setVerifyErr] = useState<string | null>(null);
   const deviceOk = DEVICE_ID_RE.test(deviceId.trim());
-  const ready = room.trim().length > 0 && deviceOk;
+  const codeOk = PAIRING_CODE_RE.test(code.trim());
+  const ready = room.trim().length > 0 && deviceOk && codeOk;
+
+  // Pairing requires the 4-digit code that the elder app is showing right
+  // now — a random device ID alone is never enough.
+  const submit = async () => {
+    setVerifying(true);
+    setVerifyErr(null);
+    const result = await verifyPairing(deviceId, code);
+    setVerifying(false);
+    if (!result.ok) {
+      setVerifyErr(result.reason);
+      return;
+    }
+    void haptic();
+    onSave({ room: room.trim(), deviceId: deviceId.trim().toLowerCase() });
+  };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-6 font-sans">
+    <div className="min-h-screen bg-[#f1ede6] flex items-center justify-center p-6 font-sans">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-[36px] font-bold tracking-tight text-foreground">
-            <span className="text-[#FF9933]">Home</span>Sync
-            <span className="text-[#138808]">.</span>
-          </h1>
-          <p className="text-muted-foreground mt-1 text-[15px]">Family wall display · setup</p>
-        </div>
-
-        <div className="bg-card p-6 rounded-[24px] shadow-sm border border-border">
-          <Tv className="w-10 h-10 text-primary mx-auto mb-4" />
-          <h2 className="text-lg font-bold tracking-tight text-center mb-1">Where is this screen?</h2>
-          <p className="text-muted-foreground text-sm text-center mb-5 leading-relaxed">
-            Name this display (e.g. “Kitchen display”) and enter your loved one's Device
-            ID to watch their status from any room.
+        <motion.div
+          initial={{ opacity: 0, y: -12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: "easeOut" }}
+          className="text-center mb-7"
+        >
+          <div className="w-16 h-16 mx-auto mb-4 rounded-[22px] bg-gradient-to-br from-[#34a853] to-[#0f7b34] flex items-center justify-center shadow-lg shadow-green-500/25">
+            <MonitorSmartphone className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-[28px] font-bold tracking-tight text-[#202124]">Link HomeHub</h1>
+          <p className="text-[#5f6368] mt-1 text-[15px]">
+            Connect this display to your loved one&apos;s device — enter the
+            Device&nbsp;ID and the 4-digit pairing code shown on their app.
           </p>
+        </motion.div>
 
-          <label className="text-[12px] text-muted-foreground mb-1 block">Display name</label>
-          <Input
+        <motion.div
+          initial={{ opacity: 0, y: 12, scale: 0.99 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ type: "spring", stiffness: 380, damping: 32 }}
+          className="bg-white p-6 rounded-[28px] shadow-[0_1px_2px_rgba(0,0,0,0.05),0_12px_32px_rgba(0,0,0,0.06)]"
+        >
+          <label className="text-[12px] text-[#5f6368] mb-1.5 block font-medium">Display name</label>
+          <input
             value={room}
-            onChange={e => setRoom(e.target.value)}
+            onChange={(e) => setRoom(e.target.value)}
             placeholder="e.g. Kitchen display"
-            className="h-12 rounded-xl mb-4"
+            className="w-full h-12 rounded-2xl border border-[#dadce0] bg-[#f8f9fa] px-4 text-[15px] text-[#202124] outline-none focus:border-[#4285f4] focus:ring-2 focus:ring-[#4285f4]/20 transition mb-4"
           />
 
-          <label className="text-[12px] text-muted-foreground mb-1 block">Elder device ID</label>
-          <Input
+          <label className="text-[12px] text-[#5f6368] mb-1.5 block font-medium">Loved one&apos;s device ID</label>
+          <input
             value={deviceId}
-            onChange={e => setDeviceId(e.target.value)}
+            onChange={(e) => { setDeviceId(e.target.value); setVerifyErr(null); }}
             placeholder="e.g. a1b2c3d4"
             className={cn(
-              "h-12 rounded-xl text-center font-mono tracking-widest",
-              deviceId.trim() && !deviceOk && "border-red-400 text-red-500 focus-visible:ring-red-400"
+              "w-full h-12 rounded-2xl border border-[#dadce0] bg-[#f8f9fa] px-4 text-center text-lg tracking-[0.3em] font-mono text-[#202124] outline-none transition",
+              deviceId.trim() && !deviceOk
+                ? "border-red-400 focus:border-red-400 focus:ring-2 focus:ring-red-300/30"
+                : "focus:border-[#4285f4] focus:ring-2 focus:ring-[#4285f4]/20"
             )}
           />
           {deviceId.trim() && !deviceOk && (
-            <p className="text-[11px] text-red-500 mt-2">
-              Device ID must be exactly 8 characters (letters a-f and numbers 0-9). Check for typos.
+            <p className="text-[12px] text-[#d93025] mt-2">
+              The ID is 8 characters (letters a&#8211;f and numbers 0&#8211;9). Ask your loved one to tap it on their app.
             </p>
           )}
 
-          <Button onClick={() => onSave({ room: room.trim(), deviceId: deviceId.trim() })}
-            disabled={!ready}
-            className="w-full h-12 rounded-xl bg-primary text-lg font-semibold mt-5">
-            Start display <ArrowRight className="w-4 h-4" />
-          </Button>
+          <label className="text-[12px] text-[#5f6368] mb-1.5 mt-4 block font-medium">Pairing code</label>
+          <input
+            value={code}
+            onChange={(e) => { setCode(e.target.value.replace(/\D/g, "").slice(0, 4)); setVerifyErr(null); }}
+            placeholder="e.g. 4829"
+            inputMode="numeric"
+            className={cn(
+              "w-full h-12 rounded-2xl border border-[#dadce0] bg-[#f8f9fa] px-4 text-center text-lg tracking-[0.5em] font-mono text-[#202124] outline-none transition",
+              code.trim() && !codeOk
+                ? "border-red-400 focus:border-red-400 focus:ring-2 focus:ring-red-300/30"
+                : "focus:border-[#4285f4] focus:ring-2 focus:ring-[#4285f4]/20"
+            )}
+          />
+          <p className="text-[12px] text-[#5f6368] mt-2">
+            Shown on the elder&apos;s app — temporary, valid for 5 minutes. Tap
+            &quot;New code&quot; there if it expired.
+          </p>
+
+          {verifyErr && (
+            <p className="text-[12px] text-[#d93025] mt-3 bg-red-50 rounded-xl px-3 py-2.5 leading-relaxed">
+              {verifyErr}
+            </p>
+          )}
+
+          <button
+            onClick={() => void submit()}
+            disabled={!ready || verifying}
+            className={cn(
+              "w-full h-12 rounded-2xl mt-5 text-[15px] font-semibold text-white transition flex items-center justify-center gap-2",
+              ready && !verifying
+                ? "bg-[#1a73e8] hover:bg-[#1765cc] active:scale-[0.98] shadow-md shadow-blue-500/25"
+                : "bg-[#dadce0] text-[#5f6368] cursor-not-allowed"
+            )}
+          >
+            {verifying ? "Verifying…" : "Link this display"}
+          </button>
 
           {onCancel && (
-            <button onClick={onCancel} className="w-full text-center text-muted-foreground text-[13px] mt-3 cursor-pointer transition-colors duration-150 hover:text-foreground">
+            <button onClick={onCancel}
+              className="w-full text-center text-[#5f6368] text-[13px] mt-4 cursor-pointer hover:text-[#202124] transition">
               Cancel
             </button>
           )}
-        </div>
+        </motion.div>
       </div>
     </div>
   );
 }
 
-// ── Main wall display ─────────────────────────────────────────────────
+// ── Weather (Open-Meteo — free, no API key) ────────────────────────────
+
+const WEATHER_URL = "https://api.open-meteo.com/v1/forecast";
+const LOC_KEY = "hub_location";
+
+// Fallback when geolocation is refused/unavailable — set these to the
+// elder's home town.
+const FALLBACK_LOC = { lat: 9.9312, lng: 76.2673, name: "current town" };
+
+type Weather = {
+  temp: number;
+  feels: number;
+  humidity: number;
+  wind: number;
+  code: number;
+  isDay: boolean;
+  tMax: number;
+  tMin: number;
+  sunrise: string;
+  sunset: string;
+  place: string;
+};
+
+function wmo(code: number, isDay: boolean): { emoji: string; label: string } {
+  if (code === 0) return isDay ? { emoji: "☀️", label: "Clear skies" } : { emoji: "🌙", label: "Clear night" };
+  if (code === 1) return isDay ? { emoji: "🌤️", label: "Mostly clear" } : { emoji: "🌙", label: "Clear night" };
+  if (code === 2) return { emoji: "⛅", label: "Partly cloudy" };
+  if (code === 3) return { emoji: "☁️", label: "Overcast" };
+  if (code <= 48) return { emoji: "🌫️", label: "Foggy" };
+  if (code <= 57) return { emoji: "🌦️", label: "Drizzle" };
+  if (code <= 67) return { emoji: "🌧️", label: "Rain" };
+  if (code <= 77) return { emoji: "🌨️", label: "Snow" };
+  if (code <= 82) return { emoji: "🌧️", label: "Showers" };
+  if (code <= 86) return { emoji: "🌨️", label: "Snow showers" };
+  return { emoji: "⛈️", label: "Thunderstorm" };
+}
+
+function WeatherCard({ onRefresh }: { onRefresh: (w: Weather) => void }) {
+  const [weather, setWeather] = useState<Weather | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  const fetchWeather = useCallback(async () => {
+    try {
+      let loc = FALLBACK_LOC;
+      try {
+        const cached = localStorage.getItem(LOC_KEY);
+        if (cached) {
+          const c = JSON.parse(cached) as { lat: number; lng: number };
+          if (typeof c.lat === "number" && typeof c.lng === "number") loc = { lat: c.lat, lng: c.lng, name: "your location" };
+        } else {
+          const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+            const id = navigator.geolocation?.watchPosition(
+              (p) => { navigator.geolocation.clearWatch(id); resolve(p); },
+              (err) => { navigator.geolocation?.clearWatch(id); reject(err); },
+              { enableHighAccuracy: false, timeout: 6000, maximumAge: 300000 }
+            );
+            if (id == null) reject(new Error("no geolocation"));
+            setTimeout(() => { navigator.geolocation?.clearWatch(id); reject(new Error("timeout")); }, 6500);
+          });
+          loc = { lat: pos.coords.latitude, lng: pos.coords.longitude, name: "your location" };
+          localStorage.setItem(LOC_KEY, JSON.stringify({ lat: loc.lat, lng: loc.lng }));
+        }
+      } catch { /* fall through to constant */ }
+
+      const params = new URLSearchParams({
+        latitude: String(loc.lat),
+        longitude: String(loc.lng),
+        current: "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m",
+        daily: "weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset",
+        timezone: "auto",
+        forecast_days: "1",
+      });
+      const res = await fetch(`${WEATHER_URL}?${params}`, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) throw new Error(`weather ${res.status}`);
+      const j = (await res.json()) as {
+        current: { temperature_2m: number; relative_humidity_2m: number; apparent_temperature: number; is_day: number; weather_code: number; wind_speed_10m: number };
+        daily: { weather_code: number[]; temperature_2m_max: number[]; temperature_2m_min: number[]; sunrise: string[]; sunset: string[] };
+      };
+      const w: Weather = {
+        temp: j.current.temperature_2m,
+        feels: j.current.apparent_temperature,
+        humidity: j.current.relative_humidity_2m,
+        wind: j.current.wind_speed_10m,
+        code: j.current.weather_code,
+        isDay: j.current.is_day === 1,
+        tMax: j.daily.temperature_2m_max[0],
+        tMin: j.daily.temperature_2m_min[0],
+        sunrise: j.daily.sunrise[0],
+        sunset: j.daily.sunset[0],
+        place: loc.name,
+      };
+      setWeather(w);
+      setFailed(false);
+      onRefresh(w);
+    } catch {
+      setFailed(true);
+    }
+  }, [onRefresh]);
+
+  useEffect(() => {
+    void fetchWeather();
+    const id = setInterval(() => void fetchWeather(), 15 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [fetchWeather]);
+
+  const meta = weather ? wmo(weather.code, weather.isDay) : null;
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <section className="bg-white rounded-[28px] p-6 shadow-[0_1px_2px_rgba(0,0,0,0.05),0_12px_32px_rgba(0,0,0,0.06)]">
+      <div className="flex items-center gap-2 text-[12px] font-semibold text-[#5f6368] uppercase tracking-wider mb-3">
+        <CloudSun className="w-4 h-4" /> Weather
+      </div>
+      {!weather && !failed && (
+        <div className="text-[13px] text-[#5f6368] py-6 text-center">Fetching the forecast…</div>
+      )}
+      {!weather && failed && (
+        <div className="py-6 flex flex-col items-center gap-3">
+          <span className="text-[28px]">🌤️</span>
+          <div className="text-[13px] text-[#5f6368] text-center">
+            Can&apos;t reach the weather service right now.<br />It&apos;ll retry automatically.
+          </div>
+        </div>
+      )}
+      {weather && meta && (
+        <div>
+          <div className="flex items-center gap-4">
+            <span className="text-[52px] leading-none">{meta.emoji}</span>
+            <div>
+              <div className="text-[34px] font-bold leading-none tabular-nums">
+                {Math.round(weather.temp)}°
+                <span className="text-[14px] font-medium text-[#5f6368] ml-1">C</span>
+              </div>
+              <div className="text-[13px] text-[#5f6368] mt-1">{meta.label}</div>
+            </div>
+            <div className="ml-auto text-right">
+              <div className="text-[13px] font-semibold">{weather.place}</div>
+              <div className="text-[12px] text-[#5f6368]">
+                H {Math.round(weather.tMax)}° · L {Math.round(weather.tMin)}°
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-4 gap-2 mt-5 text-center">
+            <div className="rounded-2xl bg-[#f8f9fa] py-2.5">
+              <div className="text-[11px] text-[#5f6368]">Feels like</div>
+              <div className="text-[14px] font-semibold mt-0.5">{Math.round(weather.feels)}°</div>
+            </div>
+            <div className="rounded-2xl bg-[#f8f9fa] py-2.5">
+              <div className="text-[11px] text-[#5f6368] flex items-center justify-center gap-1"><Droplets className="w-3 h-3" /> Humidity</div>
+              <div className="text-[14px] font-semibold mt-0.5">{Math.round(weather.humidity)}%</div>
+            </div>
+            <div className="rounded-2xl bg-[#f8f9fa] py-2.5">
+              <div className="text-[11px] text-[#5f6368] flex items-center justify-center gap-1"><Wind className="w-3 h-3" /> Wind</div>
+              <div className="text-[14px] font-semibold mt-0.5">{Math.round(weather.wind)} km/h</div>
+            </div>
+            <div className="rounded-2xl bg-[#f8f9fa] py-2.5">
+              <div className="text-[11px] text-[#5f6368] flex items-center justify-center gap-1"><Sunrise className="w-3 h-3" /> Sunset</div>
+              <div className="text-[14px] font-semibold mt-0.5">{fmt(weather.sunset)}</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── Vitals (display only) ──────────────────────────────────────────────
+
+type VitalDef = {
+  key: string;
+  label: string;
+  unit: string;
+  icon: React.ReactNode;
+  tint: string;
+  range: string;
+  ok: (v: number) => boolean;
+};
+
+const VITAL_DEFS: VitalDef[] = [
+  { key: "heartRate",       label: "Heart rate",     unit: "bpm",     icon: <Heart className="w-5 h-5" />, tint: "bg-rose-100 text-rose-600",     range: "60–100", ok: v => v >= 60 && v <= 100 },
+  { key: "spo2",            label: "O₂ saturation",  unit: "%",       icon: <Droplets className="w-5 h-5" />, tint: "bg-sky-100 text-sky-600",     range: "95–100%", ok: v => v >= 95 },
+  { key: "temperature",     label: "Temperature",    unit: "°C",      icon: <Thermometer className="w-5 h-5" />, tint: "bg-amber-100 text-amber-600", range: "36.1–37.2°C", ok: v => v >= 36.1 && v <= 37.2 },
+  { key: "respiratoryRate", label: "Respiration",    unit: "/min",    icon: <Wind className="w-5 h-5" />, tint: "bg-violet-100 text-violet-600", range: "12–20", ok: v => v >= 12 && v <= 20 },
+  { key: "bloodPressure",   label: "Blood pressure", unit: "mmHg",    icon: <Activity className="w-5 h-5" />, tint: "bg-teal-100 text-teal-600",   range: "90–120 / 60–80", ok: v => v >= 90 && v <= 120 },
+  { key: "glucose",         label: "Glucose",        unit: "mg/dL",   icon: <Gauge className="w-5 h-5" />, tint: "bg-cyan-100 text-cyan-600",    range: "70–180", ok: v => v >= 70 && v <= 180 },
+];
+
+function VitalTile({ def, value, muted }: { def: VitalDef; value: number | string | null; muted: boolean }) {
+  const isBP = def.key === "bloodPressure";
+  const inRange = value != null && (isBP ? true : def.ok(value as number));
+  return (
+    <div className="bg-white rounded-[24px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05),0_8px_24px_rgba(0,0,0,0.05)]">
+      <div className="flex items-center justify-between">
+        <div className={cn("w-10 h-10 rounded-2xl flex items-center justify-center", def.tint)}>
+          {def.icon}
+        </div>
+        <span className={cn(
+          "w-2 h-2 rounded-full",
+          muted ? "bg-[#dadce0]"
+          : value == null ? "bg-amber-400 animate-pulse"
+          : inRange ? "bg-[#34a853]" : "bg-[#ea4335]"
+        )} />
+      </div>
+      <div className="mt-4 text-[11px] font-semibold text-[#5f6368] uppercase tracking-wider">{def.label}</div>
+      <div className="mt-1 flex items-baseline gap-1.5">
+        <span className={cn(
+          "text-[30px] font-bold leading-none tabular-nums",
+          !muted && value != null && !inRange && "text-[#d93025]"
+        )}>
+          {muted ? "—" : value != null ? value : "…"}
+        </span>
+        {value != null && !isBP && <span className="text-[13px] text-[#5f6368]">{def.unit}</span>}
+      </div>
+      <div className="mt-1.5 text-[11px] text-[#9aa0a6]">Normal {def.range}</div>
+    </div>
+  );
+}
+
+// ── Main hub ───────────────────────────────────────────────────────────
+
+type Tab = "home" | "vitals" | "elder";
+
+function greetingFor(h: number) {
+  if (h < 5)  return "Still awake";
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
 
 export function TabletDashboard() {
+  const selectionHaptic = useSelectionHaptic();
   const [setup, setSetup] = useState<Setup | null>(null);
   const [showWizard, setShowWizard] = useState(false);
-  const [run, setRun] = useState<RuntimeState>(INITIAL);
-  const [vitals, setVitals] = useState<Vitals>({ ...NORMAL_VITALS });
+  const [tab, setTab] = useState<Tab>("home");
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
     const raw = localStorage.getItem(SETUP_KEY);
     if (raw) {
-      try { setSetup(JSON.parse(raw)); } catch { /* ignore */ }
+      try {
+        const parsed = JSON.parse(raw) as Setup;
+        setSetup({ room: parsed.room, deviceId: parsed.deviceId.toLowerCase() });
+      } catch { /* ignore */ }
     }
   }, []);
 
-  // Live clock — a wall display should always feel alive.
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 15_000);
+    const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  // Live elder feed — only when a device is paired AND Firebase is configured.
-  // Without either, the display keeps working off its demo feed so it never
-  // looks dead while a caretaker is still setting things up.
   const live = !!setup && firebaseConfigured;
-  const { deviceStatus, connected, send } = useFirebaseDevice(live ? setup.deviceId : null);
+  const { deviceStatus, connected } = useFirebaseDevice(live ? setup!.deviceId : null);
 
-  // Gentle demo vitals — always inside normal bands, so the display NEVER
-  // invents health conditions on its own. Only a real elder alert can raise it.
-  useEffect(() => {
-    if (live) return;
-    const id = setInterval(() => {
-      setVitals(v => ({
-        heartRate:       clamp(v.heartRate + rnd(4), 65, 85),
-        spo2:            clamp(v.spo2 + rnd(1), 96, 99),
-        temperature:     clamp(v.temperature + rnd(0.15), 36.2, 37.1),
-        respiratoryRate: clamp(v.respiratoryRate + rnd(2), 13, 18),
-        systolic:        clamp(v.systolic + rnd(4), 112, 128),
-        diastolic:       clamp(v.diastolic + rnd(3), 72, 84),
-        glucose:         clamp(v.glucose + rnd(4), 100, 120),
-      }));
-    }, 1000);
-    return () => clearInterval(id);
-  }, [live]);
+  // Safety banner — a triggered condition on the elder flips the hub status.
+  const [alarm, setAlarm] = useState<string | null>(null);
+  const lastAlertRef = useRef<{ condition: string; severity: string; ts: number } | null>(null);
+  const handleElderAlert = useCallback((alert: HeartAlert) => {
+    const last = lastAlertRef.current;
+    if (last && last.condition === alert.condition && last.severity === alert.severity
+        && alert.ts - last.ts < 45_000) return;
+    lastAlertRef.current = { condition: alert.condition, severity: alert.severity, ts: alert.ts };
 
-  // Live vitals from the elder device.
-  useEffect(() => {
-    if (!deviceStatus || deviceStatus.heartRate == null) return;
-    setVitals({
-      heartRate:       deviceStatus.heartRate,
-      spo2:            deviceStatus.spo2 ?? NORMAL_VITALS.spo2,
-      temperature:     deviceStatus.temperature ?? NORMAL_VITALS.temperature,
-      respiratoryRate: deviceStatus.respiratoryRate ?? NORMAL_VITALS.respiratoryRate,
-      systolic:        deviceStatus.systolic ?? NORMAL_VITALS.systolic,
-      diastolic:       deviceStatus.diastolic ?? NORMAL_VITALS.diastolic,
-      glucose:         deviceStatus.glucose ?? NORMAL_VITALS.glucose,
-    });
-  }, [deviceStatus]);
+    if (alert.type === "SOS") {
+      setAlarm(alert.active ? "SOS activated by the elder" : null);
+      return;
+    }
+    if (alert.severity && alert.severity !== "OK") {
+      setAlarm(`${alert.condition} (${alert.severity})`);
+    }
+  }, []);
+  useElderAlerts(live ? setup!.deviceId : null, handleElderAlert);
 
-  // Battery / charging streamed from the elder device.
+  const severity = deviceStatus?.heartSeverity;
+  const condition = deviceStatus?.heartCondition;
   useEffect(() => {
     if (!deviceStatus) return;
-    setRun(p => ({
-      ...p,
-      battery:  deviceStatus.battery ?? p.battery,
-      charging: deviceStatus.charging ?? p.charging,
-    }));
-  }, [deviceStatus]);
+    if (severity && severity !== "OK") {
+      setAlarm((a) => a ?? `${condition} (${severity})`);
+    } else if (!deviceStatus.sos) {
+      setAlarm(null);
+    }
+  }, [deviceStatus, severity, condition]);
 
-  // Health alerts pushed by the elder device → show on the activity strip.
-  // Stable callback so sub-effects don't re-attach (and replay history) each render.
-  const handleElderAlert = useCallback((alert: HeartAlert) => {
-    setRun(p => ({
-      ...p,
-      lastEvent: { message: `${alert.condition} (${alert.severity})`, time: new Date() },
-      ...(isCriticalHeart(alert) ? { condition: alert.condition } : {}),
-    }));
-  }, []);
-  useElderAlerts(live ? setup.deviceId : null, handleElderAlert);
-
-  // Event feed (demo SMS events; the live feed hooks in here).
-  useEffect(() => {
-    if (live) return;
-    const handle = (e: CustomEvent) => {
-      const text = String(e.detail?.message ?? "").toUpperCase();
-      const nowT = new Date();
-      let msg = `Received: ${text}`;
-      setRun(p => {
-        const n = { ...p };
-        if (text.includes("SOS")) { n.sos = true; msg = "SOS alert"; }
-        if (text.includes("SOSACK") || text.includes("SAFE")) { n.sos = false; msg = "SOS cleared"; }
-        if (text.includes("FALL")) { n.fall = true; msg = "Fall detected"; }
-        if (text.includes("LOCKED")) n.doorLocked = true;
-        if (text.includes("UNLOCKED")) n.doorLocked = false;
-        if (text.includes("LIVINGLIGHTON")) n.livingLight = true;
-        if (text.includes("LIVINGLIGHTOFF")) n.livingLight = false;
-        if (text.includes("BEDLIGHTON")) n.bedLight = true;
-        if (text.includes("BEDLIGHTOFF")) n.bedLight = false;
-        if (text.includes("FANON")) n.fan = true;
-        if (text.includes("FANOFF")) n.fan = false;
-        if (text.includes("TORCHON")) n.torch = true;
-        if (text.includes("TORCHOFF")) n.torch = false;
-        if (text.includes("SILENT")) n.silent = true;
-        if (text.includes("UNMUTE")) n.silent = false;
-        if (text.includes("MOVING")) n.moving = true;
-        if (text.includes("STATIONARY")) n.moving = false;
-        n.lastEvent = { message: msg, time: nowT };
-        return n;
-      });
-    };
-    window.addEventListener("mock-sms", handle as EventListener);
-    return () => window.removeEventListener("mock-sms", handle as EventListener);
-  }, [live]);
-
-  // Eldest-source-wins display values (real feed overrides the demo).
-  const battery  = deviceStatus?.battery ?? run.battery;
-  const charging = deviceStatus?.charging ?? run.charging;
-  const wifiUp   = live ? connected : run.wifi;
-  // Torch is a REAL persisted state from the elder device (survives restarts).
-  const torch    = live ? (deviceStatus?.torch ?? false) : run.torch;
-
-  // Live position — the elder pushes a fix whenever the caretaker runs LOC.
-  const lat = deviceStatus?.lat;
-  const lng = deviceStatus?.lng;
-  const locAcc = deviceStatus?.accuracy;
-  const locSeen = deviceStatus?.lastSeen;
-
-  // Front-door torch toggle — a small convenience for the wall display.
-  const [toggleBusy, setToggleBusy] = useState(false);
-  const toggleTorch = async () => {
-    if (!live) return;
-    setToggleBusy(true);
-    try {
-      await send(torch ? "TORCHOFF" : "TORCHON");
-    } finally { setToggleBusy(false); }
+  // Vitals source: sample when unpaired, waiting when paired but silent,
+  // otherwise the elder's live stream (display only — no command controls).
+  const sample = !live;
+  const waiting = live && !connected;
+  const vs = deviceStatus;
+  const vitals = waiting || !vs ? null : {
+    heartRate: vs.heartRate,
+    spo2: vs.spo2,
+    temperature: vs.temperature,
+    respiratoryRate: vs.respiratoryRate,
+    systolic: vs.systolic,
+    diastolic: vs.diastolic,
+    bloodPressure: vs.systolic != null && vs.diastolic != null
+      ? Math.round(vs.systolic) + "/" + Math.round(vs.diastolic)
+      : null,
+    glucose: vs.glucose,
   };
 
-  // Only a TRIGGERED condition (or an active SOS) lights the red panel.
-  const alarmed = run.sos || !!run.condition;
+  const battery = deviceStatus?.battery;
+  const charging = deviceStatus?.charging;
+  const lastSeenMs = deviceStatus?.lastSeen != null ? new Date(deviceStatus.lastSeen).getTime() : null;
+  const ageSec = lastSeenMs != null ? (Date.now() - lastSeenMs) / 1000 : null;
+
+  const secure = !alarm && !deviceStatus?.sos;
+  const statusText = sample
+    ? "Preview"
+    : waiting
+    ? "Connecting…"
+    : ageSec != null
+    ? ageSec < 120 ? "Live" : `No update for ${Math.round(ageSec / 60)}m`
+    : "Wait…";
 
   if (!setup || showWizard) {
     return (
@@ -273,323 +479,370 @@ export function TabletDashboard() {
     );
   }
 
-  return (
-    <div className="min-h-screen bg-background p-5 font-sans">
-      {/* Header */}
-      <header className="flex items-center justify-between mb-5">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center justify-center w-10 h-10 rounded-2xl bg-primary/10 text-primary">
-            <HomeIcon className="w-5 h-5" />
-          </span>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            <span className="text-[#FF9933]">Home</span>Sync
-            <span className="text-[#138808]">.</span>
-          </h1>
-          <span className="hidden sm:flex text-muted-foreground text-[15px]">{setup.room}</span>
-        </div>
+  const hour = now.getHours();
+  const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const dateLine = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
 
-        <div className="flex items-center gap-4 text-muted-foreground">
-          <div className={cn(
-            "hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold",
-            wifiUp ? "bg-emerald-500/10 text-emerald-600" : "bg-amber-500/10 text-amber-600"
-          )}>
-            <span className={cn("w-2 h-2 rounded-full", wifiUp ? "bg-emerald-500" : "bg-amber-500")} />
-            {wifiUp ? "ONLINE" : "OFFLINE"}
-          </div>
-          <div className="flex items-center gap-1.5 text-[13px] font-mono">
-            <Battery className={cn("w-4 h-4", battery < 20 ? "text-red-500" : "text-emerald-500")} />
-            {battery}%
-          </div>
-          <div className="text-right leading-tight hidden sm:block">
-            <div className="text-xl font-mono font-semibold text-foreground">
-              {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+  return (
+    <div className="min-h-screen bg-[#f1ede6] text-[#202124] font-sans flex flex-col">
+      {/* ── Header ── */}
+      <header className="px-5 sm:px-8 pt-[calc(1rem+env(safe-area-inset-top))] pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#4285f4] to-[#0b57d0] flex items-center justify-center shadow-md shadow-blue-500/20">
+              <House className="w-5 h-5 text-white" />
             </div>
-            <div className="text-[10px] text-muted-foreground">
-              {now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
+            <div>
+              <div className="text-[13px] text-[#5f6368] leading-tight">{setup.room}</div>
+              <h1 className="text-[22px] font-bold leading-tight tracking-tight">
+                {greetingFor(hour)}
+              </h1>
             </div>
           </div>
-          <button
-            onClick={() => setShowWizard(true)}
-            title="Reconfigure"
-            className="w-8 h-8 rounded-full bg-muted flex items-center justify-center active:opacity-70 cursor-pointer transition-colors duration-150 hover:bg-muted/70"
-          >
-            <RefreshCcw className="w-4 h-4" />
-          </button>
+
+          <div className="flex items-center gap-3">
+            <span className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-semibold",
+              sample ? "bg-[#e8eaed] text-[#5f6368]"
+              : waiting ? "bg-amber-100 text-amber-700"
+              : "bg-emerald-100 text-emerald-700"
+            )}>
+              <span className={cn(
+                "w-2 h-2 rounded-full",
+                sample ? "bg-[#9aa0a6]"
+                : waiting ? "bg-amber-500 animate-pulse"
+                : "bg-emerald-500 animate-pulse"
+              )} />
+              {sample ? "Preview" : waiting ? "Connecting…" : "Live"}
+            </span>
+            <button
+              onClick={() => setShowWizard(true)}
+              title="Reconfigure"
+              className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-[#5f6368] active:scale-95 transition cursor-pointer hover:text-[#202124]"
+            >
+              <RefreshCcw className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Safety — only lights up when a condition is actually triggered */}
-        <section className={cn(
-          "rounded-3xl border p-5 flex flex-col justify-center gap-2 col-span-1 lg:col-span-1",
-          alarmed ? "border-red-500/60 bg-red-500/10" : "border-border bg-card"
-        )}>
-          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium">
-            <Shield className="w-4 h-4" /> Safety
-          </div>
-          <div className={cn("text-3xl font-bold leading-none mt-1",
-            alarmed ? "text-red-600 animate-pulse" : "text-emerald-600")}>
-            {alarmed ? "ALERT" : "SECURE"}
-          </div>
-          {alarmed && (
-            <div className="mt-1 bg-red-500/15 text-red-600 text-[14px] font-semibold rounded-xl p-2.5 flex items-center gap-2">
-              <Heart className="w-4 h-4 shrink-0" /> {run.condition || (run.sos ? "SOS active" : "Attention needed")}
-            </div>
-          )}
-          {run.fall && (
-            <div className="mt-1 bg-red-500/15 text-red-600 text-[13px] font-semibold rounded-xl p-2 flex items-center gap-2">
-              <Activity className="w-4 h-4" /> Fall detected
-            </div>
-          )}
-          <div className="text-[12px] text-muted-foreground mt-2 font-mono">{setup.deviceId}</div>
-        </section>
-
-        {/* Vitals */}
-        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-2 lg:col-span-2">
-          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-3">
-            <Heart className="w-4 h-4" /> Vitals
-            <span className="text-[10px] text-muted-foreground/70">· {live ? "live from your loved one" : "demo feed — pair a device"}</span>
-          </div>
-          <MonitorPanel vitals={vitals} />
-        </section>
-
-        {/* Location — live fix pushed when the caretaker runs LOC */}
-        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 lg:col-span-1">
-          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-2">
-            <Navigation className="w-4 h-4" /> Location
-          </div>
-          {lat != null && lng != null ? (
-            <div>
-              <div className="font-mono text-[20px] font-bold tracking-tight text-foreground leading-tight">
-                {lat.toFixed(5)}, {lng.toFixed(5)}
+      <main className="flex-1 px-5 sm:px-8 pb-28 max-w-[1100px] mx-auto w-full">
+        <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={tab}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.18, ease: "easeOut" }}
+        >
+        {/* ── Home tab ── */}
+        {tab === "home" && (
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+            {/* Big clock — the ambient hub moment */}
+            <section className="md:col-span-7 rounded-[28px] p-7 text-white relative overflow-hidden shadow-lg bg-gradient-to-br from-[#1f2740] to-[#0d1424]">
+              <div className="absolute -right-16 -top-16 w-56 h-56 rounded-full bg-white/5" />
+              <div className="absolute -right-6 -top-6 w-28 h-28 rounded-full bg-white/5" />
+              <div className="relative">
+                <div className="text-[13px] text-white/70 font-medium tracking-wide uppercase">
+                  {dateLine}
+                </div>
+                <div className="mt-2 text-[64px] sm:text-[76px] font-bold leading-none tabular-nums tracking-tight">
+                  {time}
+                </div>
+                <div className="mt-2 font-medium text-white/85">
+                  {greetingFor(hour)}
+                  {setup.room && <>
+                    <span className="text-white/50 mx-2">·</span>
+                    {setup.room}
+                  </>}
+                </div>
               </div>
-              <div className="text-[12px] text-muted-foreground mt-1">
-                {locAcc != null && `±${Math.round(locAcc)} m · `}
-                {locSeen != null && `seen ${new Date(locSeen).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
-              </div>
-              <a
-                href={`https://maps.google.com/?q=${lat},${lng}`}
-                target="_blank" rel="noreferrer"
-                className="mt-2 inline-flex items-center gap-1 text-[13px] font-semibold text-blue-600 dark:text-blue-400"
-              >
-                Open map <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            </div>
-          ) : (
-            <p className="text-[13px] text-muted-foreground leading-relaxed">
-              {live && connected
-                ? "No fix yet — tap “Slide to Locate” on the caretaker app and it appears here."
-                : live && !connected
-                ? "Connecting…"
-                : "Pairs to the family caretaker; location appears after Locate."}
-            </p>
-          )}
-          {(lat == null || lng == null) && (
-            <div className="flex items-center gap-2 text-[12px] text-muted-foreground mt-3">
-              <MapPin className="w-3.5 h-3.5" />
-              <span className="font-mono">{live && connected ? "waiting for LOC reply…" : "no device"}</span>
-            </div>
-          )}
-        </section>
+            </section>
 
-        {/* Home */}
-        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-2">
-          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-3">
-            <Zap className="w-4 h-4" /> Home
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <ToggleTile active={run.doorLocked} icon={run.doorLocked ? <Lock className="w-5 h-5" /> : <Unlock className="w-5 h-5" />}
-              label={run.doorLocked ? "Door locked" : "Door unlocked"} accent={run.doorLocked ? "text-blue-500" : "text-orange-500"} />
-            <ToggleTile active={run.livingLight} icon={<Sun className="w-5 h-5" />} label="Living room" accent="text-yellow-500" />
-            <ToggleTile active={run.bedLight}    icon={<Moon className="w-5 h-5" />} label="Bedroom" accent="text-purple-500" />
-            <ToggleTile active={run.fan}         icon={<Wind className="w-5 h-5" />} label="Fan" accent="text-cyan-500" />
-          </div>
-        </section>
-
-        {/* Elder device — torch is wired to the real persisted state */}
-        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 lg:col-span-2">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium">
-              <Smartphone className="w-4 h-4" /> Elder device
+            {/* Weather */}
+            <div className="md:col-span-5">
+              <WeatherCard onRefresh={() => { /* weather owns its state */ }} />
             </div>
-            {live && (
-              <Button
-                onClick={toggleTorch}
-                disabled={toggleBusy}
-                variant={torch ? "default" : "outline"}
-                size="sm"
-                className="rounded-xl h-9 gap-2 text-[13px]"
-              >
-                <Zap className={cn("w-4 h-4", torch && "fill-current")} />
-                {torch ? "Turn torch OFF" : "Turn torch ON"}
-              </Button>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <ToggleTile active={torch}    icon={<Power className="w-5 h-5" />} label="Torch" accent="text-yellow-500" />
-            <ToggleTile active={!run.silent} icon={run.silent ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-              label={run.silent ? "Silent" : "Ringing"} accent="text-blue-500" />
-            <ToggleTile active={charging} icon={<Zap className="w-5 h-5" />} label={charging ? "Charging" : "On battery"} accent="text-emerald-500" />
-            <ToggleTile active={wifiUp} icon={<Wifi className="w-5 h-5" />} label={wifiUp ? "Wi-Fi" : "Offline"} accent="text-sky-500" />
-          </div>
-        </section>
 
-        {/* Activity + status */}
-        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 sm:col-span-2 lg:col-span-3">
-          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium mb-3">
-            <Clock className="w-4 h-4" /> Activity
-          </div>
-          {run.lastEvent ? (
-            <div className="flex items-center gap-3 py-1">
-              <span className="w-2 h-2 rounded-full bg-primary" />
-              <div className="text-[14px] text-foreground">{run.lastEvent.message}</div>
-              <div className="text-[12px] text-muted-foreground ml-auto font-mono">
-                {run.lastEvent.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </div>
-            </div>
-          ) : (
-            <p className="text-[13px] text-muted-foreground">No events yet. Watch this space for alerts and replies.</p>
-          )}
-
-          <div className={cn("border-t border-border mt-4 pt-3 flex items-center gap-3",
-            live && (lat == null || lng == null) && "opacity-90")}>
-            <MapPin className="w-4 h-4 text-muted-foreground" />
-            <div className="text-[14px] text-foreground">
-              {lat != null && lng != null
-                ? `Live position ${lat.toFixed(4)}, ${lng.toFixed(4)}`
-                : "Home — position appears after the caretaker's Locate"}
-            </div>
-            <span className={cn(
-              "text-[11px] font-semibold px-2.5 py-1 rounded-full",
-              run.moving ? "bg-blue-500/10 text-blue-600" : "bg-muted text-muted-foreground"
+            {/* Safety banner */}
+            <section className={cn(
+              "md:col-span-12 rounded-[28px] p-6 text-white relative overflow-hidden shadow-lg transition-colors duration-500",
+              secure
+                ? "bg-gradient-to-br from-[#34a853] to-[#188038] shadow-green-500/20"
+                : "bg-gradient-to-br from-[#ea4335] to-[#b31412] shadow-red-500/25 animate-pulse"
             )}>
-              {run.moving ? "Moving" : "Stationary"}
-            </span>
+              <div className="absolute -right-10 -top-10 w-48 h-48 rounded-full bg-white/10" />
+              <div className="relative flex items-center gap-4">
+                <div className={cn(
+                  "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0",
+                  secure ? "bg-white/20" : "bg-white/25"
+                )}>
+                  {secure ? <ShieldCheck className="w-6 h-6" /> : <ShieldAlert className="w-6 h-6" />}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[20px] font-bold leading-tight">
+                    {secure ? (deviceStatus ? "All clear" : "Safe & sound") : "Needs attention"}
+                  </div>
+                  <div className="text-[13px] text-white/85 mt-0.5 leading-relaxed">
+                    {alarm
+                      ? alarm
+                      : deviceStatus?.sos
+                      ? "SOS is active — the caretaker has been notified."
+                      : live
+                      ? "Your loved one&apos;s device is reporting normally."
+                      : "Pair a device to bring this display to life."}
+                  </div>
+                </div>
+                {statusText !== "Preview" && ageSec != null && !waiting && (
+                  <span className="ml-auto hidden sm:flex items-center gap-2 text-[12px] text-white/85 bg-white/15 rounded-full px-3.5 py-2 shrink-0">
+                    <Clock className="w-3.5 h-3.5" />
+                    updated {Math.round(ageSec)}s ago
+                  </span>
+                )}
+              </div>
+            </section>
+
+            {/* Elder phone status strip */}
+            <section className="md:col-span-12 grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-white rounded-[24px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05),0_8px_24px_rgba(0,0,0,0.05)] flex items-center gap-4">
+                <div className="w-11 h-11 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                  <Battery className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-[#5f6368] uppercase tracking-wider">Battery</div>
+                  <div className="text-[20px] font-bold leading-tight tabular-nums">
+                    {battery != null ? `${battery}%` : sample ? "—" : "…"}
+                    {charging && <span className="text-[11px] font-medium text-[#5f6368] ml-1">⚡</span>}
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white rounded-[24px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05),0_8px_24px_rgba(0,0,0,0.05)] flex items-center gap-4">
+                <div className="w-11 h-11 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center">
+                  <Wifi className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-[#5f6368] uppercase tracking-wider">Connection</div>
+                  <div className="text-[20px] font-bold leading-tight">
+                    {sample ? "Preview" : waiting ? "Connecting…" : "Online"}
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white rounded-[24px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05),0_8px_24px_rgba(0,0,0,0.05)] flex items-center gap-4">
+                <div className="w-11 h-11 rounded-2xl bg-violet-100 text-violet-600 flex items-center justify-center">
+                  <HeartPulse className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-[#5f6368] uppercase tracking-wider">Vitals</div>
+                  <div className="text-[20px] font-bold leading-tight">
+                    {sample || waiting ? "—" : vitals ? "Streaming" : "—"}
+                  </div>
+                </div>
+              </div>
+            </section>
           </div>
-        </section>
-
-        {/* Status strip */}
-        <section className="rounded-3xl border border-border bg-card p-5 col-span-1 flex flex-col justify-center gap-3">
-          <div className="flex items-center gap-2 text-muted-foreground text-[13px] font-medium">
-            <CheckCircle2 className="w-4 h-4" /> Status
-          </div>
-          <div className={cn(
-            "text-[15px] font-semibold flex items-center gap-2",
-            run.condition ? "text-red-600" : "text-emerald-600"
-          )}>
-            <Bell className="w-4 h-4" /> {run.condition ? run.condition : "No alerts"}
-          </div>
-          <div className="flex items-center gap-2 text-muted-foreground text-[12px]">
-            <Thermometer className="w-4 h-4" /> Home {run.roomTemp}°C
-          </div>
-        </section>
-      </main>
-    </div>
-  );
-}
-
-/** Alerted = ONLY a triggered condition / active SOS. The demo feed never
- *  crosses thresholds, and the live feed uses the elder's own severity. */
-
-// ── Monitor-style vitals panel ──────────────────────────────────────
-
-const POINTS = 90;
-const GLOW = "drop-shadow(0 0 3px VAR) drop-shadow(0 0 1px VAR)";
-
-type TraceKey = "heartRate" | "spo2" | "temperature" | "respiratoryRate" | "systolic" | "diastolic";
-
-const TRACES: { key: TraceKey; label: string; unit: string; min: number; max: number; color: string }[] = [
-  { key: "heartRate",       label: "HR",    unit: "bpm",   min: 55,  max: 105, color: "#4ade80" },
-  { key: "spo2",            label: "SpO₂",  unit: "%",     min: 93,  max: 101, color: "#22d3ee" },
-  { key: "respiratoryRate", label: "RESP",  unit: "/min",  min: 8,   max: 26,  color: "#facc15" },
-  { key: "temperature",     label: "TEMP",  unit: "°C",    min: 35.8, max: 37.6, color: "#fb923c" },
-  { key: "systolic",        label: "SYS",   unit: "mmHg",  min: 95,  max: 145, color: "#a78bfa" },
-  { key: "diastolic",       label: "DIA",   unit: "mmHg",  min: 60,  max: 100, color: "#f472b6" },
-];
-
-function fmt(v: number, t: (typeof TRACES)[number]) {
-  return t.key === "temperature" ? v.toFixed(1) : String(Math.round(v));
-}
-
-function MonitorPanel({ vitals }: { vitals: Vitals }) {
-  const [buffers, setBuffers] = useState<Record<string, number[]>>({});
-
-  useEffect(() => {
-    setBuffers(prev => {
-      const next: Record<string, number[]> = {};
-      for (const t of TRACES) {
-        const arr = [...(prev[t.key] ?? []), vitals[t.key]];
-        next[t.key] = arr.length > POINTS ? arr.slice(arr.length - POINTS) : arr;
-      }
-      return next;
-    });
-  }, [vitals]);
-
-  return (
-    <div className="rounded-2xl bg-[#05090f] border border-white/10 overflow-hidden">
-      <div className="grid grid-cols-2 gap-x-3">
-        {TRACES.map(t => (
-          <WaveStrip key={t.key} trace={t} values={buffers[t.key] ?? []} />
-        ))}
-      </div>
-      <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-mono tracking-widest text-white/50 border-t border-white/10">
-        <span>GLUC {vitals.glucose} mg/dL</span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> LIVE
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function WaveStrip({ trace, values }: { trace: (typeof TRACES)[number]; values: number[] }) {
-  const yOf = (v: number) => 2 + (1 - (Math.min(trace.max, Math.max(trace.min, v)) - trace.min) / (trace.max - trace.min)) * 20;
-  const points = values.map((v, i) => `${(i / (POINTS - 1)) * 100},${yOf(v).toFixed(2)}`).join(" ");
-  const last = values.length ? values[values.length - 1] : null;
-
-  return (
-    <div className="flex flex-col h-[74px] px-3 pt-2">
-      <div className="flex items-baseline justify-between leading-none">
-        <span className="text-[10px] font-mono font-bold tracking-[0.2em] text-white/60">{trace.label}</span>
-        <span className="text-[12px] font-mono font-bold text-white">
-          {last != null ? fmt(last, trace) : "--"}
-          <span className="text-white/40 text-[9px] ml-0.5">{trace.unit}</span>
-        </span>
-      </div>
-      <svg viewBox="0 0 100 24" preserveAspectRatio="none" className="flex-1 w-full -ml-1">
-        <line x1="0" y1="12" x2="100" y2="12" stroke="rgba(255,255,255,0.07)" />
-        <line x1="0" y1="5" x2="100" y2="5" stroke="rgba(255,255,255,0.03)" />
-        <line x1="0" y1="19" x2="100" y2="19" stroke="rgba(255,255,255,0.03)" />
-        <line x1="100" y1="0" x2="100" y2="24" stroke="rgba(255,255,255,0.12)" />
-        {last != null && (
-          <line x1="0" y1={yOf(last)} x2="100" y2={yOf(last)} stroke={trace.color} strokeOpacity="0.18" />
         )}
-        <polyline
-          points={points}
-          fill="none"
-          stroke={trace.color}
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          vectorEffect="non-scaling-stroke"
-          style={{ filter: GLOW.replaceAll("VAR", trace.color) }}
-        />
-      </svg>
-    </div>
-  );
-}
 
-function ToggleTile({ active, icon, label, accent }: { active: boolean; icon: React.ReactNode; label: string; accent: string }) {
-  return (
-    <div className={cn(
-      "rounded-2xl border p-3 flex flex-col gap-2 transition-colors",
-      active ? "border-border bg-muted/40" : "border-border bg-transparent opacity-60"
-    )}>
-      <div className={cn(active ? accent : "text-muted-foreground")}>{icon}</div>
-      <div className="flex items-center justify-between">
-        <span className="text-[12px] font-medium text-foreground">{label}</span>
-        <span className={cn("w-1.5 h-1.5 rounded-full", active ? "bg-emerald-500" : "bg-slate-400")} />
-      </div>
+        {/* ── Vitals tab ── */}
+        {tab === "vitals" && (
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-[20px] font-bold tracking-tight">Vitals</h2>
+              <span className={cn(
+                "px-3 py-1.5 rounded-full text-[12px] font-semibold",
+                sample ? "bg-[#e8eaed] text-[#5f6368]"
+                : waiting ? "bg-amber-100 text-amber-700"
+                : "bg-emerald-100 text-emerald-700"
+              )}>
+                {sample ? "Sample data" : waiting ? "Waiting for signal" : "Live from elder"}
+              </span>
+            </div>
+            <p className="text-[13px] text-[#5f6368] mb-6">
+              {sample
+                ? "Pair a device to show your loved one's real vitals. Sample values are preview only."
+                : waiting
+                ? "Your loved one's phone isn't reporting yet — keep the HomeSync service running on it."
+                : "The latest readings streamed from your loved one's device."}
+            </p>
+
+            {/* Condition banner */}
+            <div className={cn(
+              "rounded-[24px] px-5 py-4 mb-5 flex items-center gap-4",
+              sample ? "bg-emerald-500/10"
+              : waiting ? "bg-amber-500/10"
+              : secure ? "bg-emerald-500/10"
+              : "bg-red-500/15 animate-pulse"
+            )}>
+              <div className={cn(
+                "w-11 h-11 rounded-2xl flex items-center justify-center shrink-0",
+                sample ? "bg-emerald-100 text-emerald-600"
+                : waiting ? "bg-amber-100 text-amber-600"
+                : secure ? "bg-emerald-100 text-emerald-600"
+                : "bg-red-100 text-red-600"
+              )}>
+                <Heart className="w-5 h-5" />
+              </div>
+              <div>
+                <div className={cn(
+                  "text-[15px] font-bold",
+                  sample ? "text-emerald-700"
+                  : waiting ? "text-amber-700"
+                  : secure ? "text-emerald-700"
+                  : "text-red-700"
+                )}>
+                  {sample ? "Healthy readings — preview"
+                    : waiting ? "Searching for the elder device…"
+                    : alarm ?? (secure ? "All vitals in normal range" : "A condition is being tracked")}
+                </div>
+                <div className="text-[12px] text-[#5f6368] mt-0.5">
+                  {sample ? "No elder device paired yet."
+                    : waiting ? "Keep the elder app + service running."
+                    : condition ?? "Heart condition monitoring active."}
+                </div>
+              </div>
+            </div>
+
+            {/* Vital tiles */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              {VITAL_DEFS.map((def) => (
+                <VitalTile
+                  key={def.key}
+                  def={def}
+                  value={sample
+                    ? def.key === "bloodPressure"
+                      ? "120/78"
+                      : NORMAL_VITALS[def.key as keyof typeof NORMAL_VITALS]
+                    : vitals
+                    ? vitals[def.key as keyof typeof vitals] ?? null
+                    : null}
+                  muted={sample}
+                />
+              ))}
+            </div>
+
+            <p className="text-[12px] text-[#9aa0a6] mt-6 leading-relaxed">
+              Vitals update automatically every few seconds from your loved one&apos;s device.
+              {sample && " Colors are muted in preview — live values flag green when in range and red when out of range."}
+            </p>
+          </div>
+        )}
+
+        {/* ── Elder tab ── */}
+        {tab === "elder" && (
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+            <section className="md:col-span-8 bg-white rounded-[28px] p-6 shadow-[0_1px_2px_rgba(0,0,0,0.05),0_12px_32px_rgba(0,0,0,0.06)]">
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 rounded-[22px] bg-gradient-to-br from-[#4285f4] to-[#0b57d0] flex items-center justify-center shadow-lg shadow-blue-500/20">
+                  <Smartphone className="w-8 h-8 text-white" />
+                </div>
+                <div>
+                  <div className="text-[20px] font-bold leading-tight">Loved one&apos;s phone</div>
+                  <div className="text-[13px] text-[#5f6368] font-mono">{setup.deviceId}</div>
+                </div>
+                <span className={cn(
+                  "ml-auto px-3.5 py-1.5 rounded-full text-[12px] font-semibold",
+                  sample ? "bg-[#e8eaed] text-[#5f6368]"
+                  : waiting ? "bg-amber-100 text-amber-700"
+                  : "bg-emerald-100 text-emerald-700"
+                )}>
+                  {sample ? "Preview" : waiting ? "Connecting…" : "Online"}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 mt-6">
+                <div className="rounded-2xl bg-[#f8f9fa] p-4 text-center">
+                  <Battery className={cn("w-5 h-5 mx-auto", battery != null && battery < 20 ? "text-[#d93025]" : "text-[#34a853]")} />
+                  <div className="text-[20px] font-bold mt-2">{battery != null ? `${battery}%` : "—"}</div>
+                  <div className="text-[11px] text-[#5f6368]">{charging ? "Charging" : "Battery"}</div>
+                </div>
+                <div className="rounded-2xl bg-[#f8f9fa] p-4 text-center">
+                  <Clock className="w-5 h-5 mx-auto text-[#4285f4]" />
+                  <div className="text-[20px] font-bold mt-2">{ageSec != null ? `${Math.round(ageSec)}s` : "—"}</div>
+                  <div className="text-[11px] text-[#5f6368]">Since last update</div>
+                </div>
+                <div className="rounded-2xl bg-[#f8f9fa] p-4 text-center">
+                  <ShieldCheck className={cn("w-5 h-5 mx-auto", secure ? "text-[#34a853]" : "text-[#ea4335]")} />
+                  <div className="text-[20px] font-bold mt-2">{secure ? "Clear" : "Alert"}</div>
+                  <div className="text-[11px] text-[#5f6368]">Safety status</div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-[#f8f9fa] p-4 mt-5">
+                <div className="text-[11px] font-semibold text-[#5f6368] uppercase tracking-wider mb-1">Heart condition</div>
+                <div className="text-[15px] font-semibold">
+                  {sample ? "Monitoring (preview)"
+                    : waiting ? "Waiting for first reading…"
+                    : condition && severity && severity !== "OK"
+                    ? `${condition} — ${severity === "CRITICAL" ? "critical" : "watch"}.`
+                    : deviceStatus ? "No issues detected" : "—"}
+                </div>
+              </div>
+            </section>
+
+            <section className="md:col-span-4 flex flex-col gap-5">
+              <div className="bg-white rounded-[28px] p-6 shadow-[0_1px_2px_rgba(0,0,0,0.05),0_12px_32px_rgba(0,0,0,0.06)]">
+                <div className="flex items-center gap-2 text-[12px] font-semibold text-[#5f6368] uppercase tracking-wider mb-3">
+                  <MapPin className="w-4 h-4" /> Position
+                </div>
+                {deviceStatus?.lat != null && deviceStatus?.lng != null ? (
+                  <div>
+                    <div className="font-mono text-[15px]">
+                      {deviceStatus.lat.toFixed(5)}, {deviceStatus.lng.toFixed(5)}
+                    </div>
+                    <a href={`https://maps.google.com/?q=${deviceStatus.lat},${deviceStatus.lng}`}
+                      target="_blank" rel="noreferrer"
+                      className="mt-3 inline-flex items-center gap-2 text-[13px] font-semibold text-[#1a73e8] cursor-pointer hover:text-[#1765cc] transition">
+                      Open in Google Maps <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                ) : (
+                  <div className="text-[13px] text-[#5f6368]">
+                    {sample ? "No position in preview mode." : "Position appears once the device reports."}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white rounded-[28px] p-6 shadow-[0_1px_2px_rgba(0,0,0,0.05),0_12px_32px_rgba(0,0,0,0.05)]">
+                <div className="text-[13px] font-semibold text-[#5f6368] uppercase tracking-wider mb-3">Home hub</div>
+                <p className="text-[13px] text-[#5f6368] leading-relaxed">
+                  This display shows your loved one&apos;s vitals, safety status and the
+                  weather at a glance. Everything updates automatically — no buttons needed.
+                </p>
+              </div>
+            </section>
+          </div>
+        )}
+        </motion.div>
+        </AnimatePresence>
+      </main>
+
+      {/* ── Bottom navigation ── */}
+      <nav className="fixed bottom-0 left-0 right-0 pb-[max(env(safe-area-inset-bottom),12px)] px-6 z-40">
+        <div className="max-w-[420px] mx-auto bg-white/95 backdrop-blur-xl rounded-full shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-black/5 p-1.5 flex">
+          {([
+            { id: "home" as Tab, label: "Home", icon: <House className="w-5 h-5" /> },
+            { id: "vitals" as Tab, label: "Vitals", icon: <HeartPulse className="w-5 h-5" /> },
+            { id: "elder" as Tab, label: "Elder", icon: <Smartphone className="w-5 h-5" /> },
+          ]).map((t) => (
+            <motion.button
+              key={t.id}
+              whileTap={{ scale: 0.92 }}
+              onClick={() => {
+                void selectionHaptic();
+                setTab(t.id);
+              }}
+              className={cn(
+                "flex-1 h-12 rounded-full flex items-center justify-center gap-2 text-[13px] font-semibold transition-colors cursor-pointer",
+                tab === t.id
+                  ? "bg-[#e8f0fe] text-[#1a73e8]"
+                  : "text-[#5f6368] hover:text-[#202124] hover:bg-[#f8f9fa]"
+              )}
+            >
+              {t.icon}
+              {t.label}
+            </motion.button>
+          ))}
+        </div>
+      </nav>
     </div>
   );
 }

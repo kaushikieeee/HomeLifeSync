@@ -23,7 +23,7 @@ const VITAL_LABELS: { key: 'hr' | 'spo2' | 'temperature' | 'systolic' | 'respira
 
 function playSiren() {
   try {
-    const Ctx = window.AudioContext ?? (window as any).webkitAudioContext;
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     const ctx = new Ctx();
     const beep = (freq: number, dur: number, delay: number) => {
       const o = ctx.createOscillator();
@@ -43,12 +43,35 @@ function playSiren() {
   }
 }
 
+const SIREN_KEY = 'hls:sirenPlayed';
+const SIREN_CAP = 100;
+
+function loadSirenIds(): Set<string> {
+  try {
+    return new Set<string>(JSON.parse(localStorage.getItem(SIREN_KEY) ?? '[]'));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function rememberSirenId(id: string) {
+  const ids = loadSirenIds();
+  ids.add(id);
+  const list = [...ids].slice(-SIREN_CAP);
+  try {
+    localStorage.setItem(SIREN_KEY, JSON.stringify(list));
+  } catch {
+    // storage unavailable — in-memory guard below still works for this session
+  }
+}
+
 export function HeartAlertOverlay({ alert, onAcknowledge }: Props) {
   const sirenPlayedFor = useRef<string | null>(null);
 
   useEffect(() => {
-    if (alert && sirenPlayedFor.current !== alert.id) {
+    if (alert && sirenPlayedFor.current !== alert.id && !loadSirenIds().has(alert.id)) {
       sirenPlayedFor.current = alert.id;
+      rememberSirenId(alert.id);
       playSiren();
       if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
         navigator.vibrate([300, 100, 300, 100, 500]);

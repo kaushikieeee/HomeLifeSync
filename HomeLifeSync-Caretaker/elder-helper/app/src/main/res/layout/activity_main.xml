@@ -108,6 +108,71 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
+        <!-- ── Pairing code ─────────────────────────────────────────── -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="14dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="1dp"
+            app:cardBackgroundColor="@color/surface">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="PAIRING CODE · TAP TO COPY"
+                        android:textSize="10sp"
+                        android:textAllCaps="true"
+                        android:letterSpacing="0.1"
+                        android:textColor="@color/text_secondary"
+                        android:layout_marginBottom="6dp" />
+                    <Button
+                        android:id="@+id/btnNewCode"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:text="New code"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:backgroundTint="@color/primary"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="14dp"
+                        android:paddingVertical="0dp"
+                        android:layout_marginBottom="6dp" />
+                </LinearLayout>
+                <TextView
+                    android:id="@+id/tvPairCode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="—"
+                    android:textSize="30sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.3"
+                    android:textColor="@color/primary"
+                    android:fontFamily="monospace"
+                    android:background="?attr/selectableItemBackground"
+                    android:paddingVertical="2dp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Temporary code — valid for 5 minutes. With the device ID above, enter this on the wall display to pair."
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary"
+                    android:lineSpacingMultiplier="1.4"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
         <!-- ── Live vitals ─────────────────────────────────────────── -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
@@ -304,6 +369,51 @@
             app:cornerRadius="12dp"
             android:backgroundTint="@color/primary"
             android:layout_marginBottom="14dp" />
+
+        <!-- ── Pairing / disconnect ─────────────────────────────────── -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="14dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="1dp"
+            app:cardBackgroundColor="@color/surface">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="PAIRED WITH CARETAKER"
+                    android:textSize="10sp"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.1"
+                    android:textColor="@color/text_secondary"
+                    android:layout_marginBottom="4dp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Disconnect if the caretaker changes or you want to re-pair with a different phone number. Your device ID stays the same."
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary"
+                    android:lineSpacingMultiplier="1.4"
+                    android:layout_marginBottom="12dp" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnDisconnect"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:text="Disconnect"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/status_stopped"
+                    app:cornerRadius="12dp"
+                    app:strokeColor="@color/status_stopped"
+                    app:strokeWidth="1dp"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
 
         <!-- ── Advanced access ──────────────────────────────────────── -->
         <androidx.cardview.widget.CardView

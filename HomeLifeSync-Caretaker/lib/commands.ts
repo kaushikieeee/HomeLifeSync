@@ -13,6 +13,7 @@ export type HeartAlert = {
   severity: string;
   ts: number;
   source?: 'local' | 'elder';
+  active?: boolean;
   hr?: number;
   spo2?: number;
   temperature?: number;

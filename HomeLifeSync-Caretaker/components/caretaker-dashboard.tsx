@@ -1,33 +1,35 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from "motion/react";
 import {
-  User, Settings, LogOut, Send, Search, X, Shield, MapPin, Phone,
+  Settings, LogOut, Send, Search, X, Shield, MapPin, Phone,
   Bell, Zap, ChevronRight, Home, Command, Clock, Pill,
   Lock, MessageSquare, Smartphone, Activity, Brain, Wifi, Camera,
   Grid, Thermometer, Power, FileText, MessageCircle, List,
-  CheckCircle2, Loader2, BatteryLow, Battery, ArrowUpRight, Watch,
+  CheckCircle2, Loader2, Battery, ArrowUpRight, Watch,
   Heart,
 } from 'lucide-react';
 import { useHaptic, useSelectionHaptic, ImpactStyle } from '@/hooks/use-haptic';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { SMS_COMMANDS, IMPLEMENTED_COMMANDS } from '@/lib/commands';
+import { SMS_COMMANDS, IMPLEMENTED_COMMANDS, type HeartAlert } from '@/lib/commands';
 import { SlideButton } from '@/components/ui/slide-button';
 import { useFirebaseDevice } from '@/hooks/use-firebase-device';
 import { useHealthMonitor } from '@/hooks/use-heart-monitor';
 import { useElderAlerts } from '@/hooks/use-elder-alerts';
 import { VitalsCard } from '@/components/vitals-card';
 import { HeartAlertOverlay } from '@/components/heart-alert-overlay';
-import { SCENARIOS, NORMAL_VITALS } from '@/lib/health';
-import { ConnectWizard } from '@/components/connect-wizard';
 import { firebaseConfigured } from '@/lib/firebase';
+import { SCENARIOS, NORMAL_VITALS } from '@/lib/health';
+import { publishHealthEvent } from '@/lib/firebase-commands';
+import { ConnectWizard } from '@/components/connect-wizard';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -35,12 +37,19 @@ declare global {
   interface Window {
     Fingerprint?: {
       isAvailable: (s: (r: string) => void, e: (m: string) => void) => void;
-      show: (opts: object, s: (r: any) => void, e: (err: any) => void) => void;
+      show: (opts: object, s: (r: unknown) => void, e: (err: unknown) => void) => void;
     };
   }
 }
 
 const DANGEROUS_COMMANDS = new Set(['REBOOT', 'POWEROFF', 'WIPE']);
+
+/** Native bridge (capacitor) — opens an installed app on THIS phone. */
+const AppLauncher = registerPlugin<{
+  openPackage: (opts: { packageName: string }) => Promise<{
+    installed: boolean; opened: boolean; playStore?: boolean;
+  }>;
+}>('AppLauncher');
 
 // ── Category styling ───────────────────────────────────────────────────────────
 
@@ -80,24 +89,30 @@ export function CaretakerDashboard() {
 
   // ── Device ID state ──────────────────────────────────────────────
   const [deviceId,    setDeviceId]    = useState<string | null>(null);
-  const [role,        setRole]        = useState('');
   const [name,        setName]        = useState('');
   const [scrolled,    setScrolled]    = useState(false);
   const [tab,         setTab]         = useState<Tab>('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [lastLoc, setLastLoc] = useState<{ reply: string; time: Date } | null>(null);
+  const [flashOn, setFlashOn] = useState(false);
 
   // ── Firebase hook ────────────────────────────────────────────────
   // Only attach when the build ships Firebase config — an empty env would
   // initialize an empty app and throw in the status subscription.
   const fbDevId = firebaseConfigured ? deviceId : null;
-  const { deviceStatus, history, cmdStatus, lastReply, send, connected } =
+  const { deviceStatus, history, cmdStatus, send, connected } =
     useFirebaseDevice(fbDevId);
 
   // ── Wearable vitals + loud health alerts ─────────────────────────
   const health = useHealthMonitor();
-  useElderAlerts(fbDevId, health.pushElderAlert);
+  // Only HEALTH records take the loud path — SOS entries (written by the
+  // elder when SOS/SOSACK runs) stay with the tablet/elder display.
+  const handleElderHealthAlert = useCallback((alert: HeartAlert) => {
+    if (alert.type !== 'HEALTH') return;
+    health.pushElderAlert(alert);
+  }, [health.pushElderAlert]);
+  useElderAlerts(fbDevId, handleElderHealthAlert);
 
   // Sync vitals from the SAME feed the elder device publishes, so heart
   // rate is identical on the elder phone, the caretaker and the tablet.
@@ -117,20 +132,42 @@ export function CaretakerDashboard() {
     });
   }, [deviceStatus]);
 
-  // Local simulation; when an elder device is connected, echo the same
-  // scenario command so BOTH sides go into the same state and alert.
-  const handleSimulate = (cmd: string) => {
+  // Local simulation; broadcast the SAME scenario to every watcher so the
+  // elder phone, caretaker and tablet hubs all converge on one condition.
+  const handleSimulate = async (cmd: string) => {
     health.simulate(cmd);
     const s = SCENARIOS.find(x => x.cmd === cmd);
-    if (cmd !== 'HRNORMAL' && connected && s) runCommand(cmd, s.desc);
+    if (!s) return;
+
+    // Broadcast the condition to tablets/hubs via the shared stream — but
+    // ONLY when the elder phone can't do it itself. When `connected` we also
+    // push the scenario command below, and the elder writes its own alert
+    // on receipt; publishing here too would duplicate /alerts and make every
+    // screen re-alarm for the same episode.
+    if (deviceId && firebaseConfigured && !connected) {
+      try {
+        await publishHealthEvent(
+          deviceId,
+          s.label.toUpperCase(),
+          s.expectedSeverity,
+          health.vitals
+        );
+      } catch { /* local simulation still works offline */ }
+    }
+
+    // Push the scenario to the elder phone so it raises its own alarm and
+    // streams the same condition. HRNORMAL must go too — otherwise the elder
+    // keeps streaming the abnormal state and the caretaker's reset is
+    // immediately reverted by the live feed (alert loop).
+    if (connected && s) runCommand(cmd, s.desc);
   };
 
   // ── Load saved device ID ─────────────────────────────────────────
   useEffect(() => {
     const saved = localStorage.getItem('elder_device_id');
     if (saved) setDeviceId(saved);
-    setRole(localStorage.getItem('caretaker_role') ?? '');
     setName(localStorage.getItem('caretaker_name') ?? '');
+    localStorage.removeItem('caretaker_role'); // purge legacy key
   }, []);
 
   const saveDeviceId = (id: string) => {
@@ -230,7 +267,44 @@ export function CaretakerDashboard() {
 
   const locLat = deviceStatus?.lat;
   const locLng = deviceStatus?.lng;
-  const torchOn = deviceStatus?.torch ?? false;
+  const torchReported = deviceStatus?.torch ?? false;
+
+  // Flashlight toggle — optimistic: flips instantly, reverts if the
+  // elder device rejects it; stays in sync with /status.torch.
+  useEffect(() => { setFlashOn(torchReported); }, [torchReported]);
+
+  const toggleFlash = async () => {
+    if (!deviceId) { toast.error('No device connected'); return; }
+    haptic(ImpactStyle.Medium);
+    const next = !flashOn;
+    setFlashOn(next);
+    const reply = await send(next ? 'TORCHON' : 'TORCHOFF');
+    if (reply.startsWith('❌')) {
+      setFlashOn(torchReported);
+      toast.error(reply);
+    } else {
+      toast.success(next ? 'Flashlight ON' : 'Flashlight OFF');
+    }
+  };
+
+  // Open the Mi Band companion app on THIS phone (native intent) — the web
+  // preview falls back to the Play Store page for the same package.
+  const openMiBand = async () => {
+    haptic(ImpactStyle.Medium);
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const res = await AppLauncher.openPackage({ packageName: 'com.mc.miband1' });
+        if (res.opened) toast.success('Opening Mi Band app…');
+        else if (res.playStore) toast.info('Mi Band app not installed — opening Play Store');
+        else toast.error('Could not open the Mi Band app');
+      } catch {
+        toast.error('Could not open the Mi Band app');
+      }
+    } else {
+      window.open('https://play.google.com/store/apps/details?id=com.mc.miband1', '_blank');
+      toast.info('Opening Mi Band app page (web preview)');
+    }
+  };
 
   // ── Command search filter ────────────────────────────────────────
   const filteredCategories = useMemo(() => {
@@ -251,9 +325,7 @@ export function CaretakerDashboard() {
       <ConnectWizard
         onComplete={(id, profile) => {
           localStorage.setItem('elder_device_id', id);
-          localStorage.setItem('caretaker_role', profile.role);
           localStorage.setItem('caretaker_name', profile.name);
-          setRole(profile.role);
           setName(profile.name);
           setDeviceId(id);
         }}
@@ -332,51 +404,115 @@ export function CaretakerDashboard() {
               initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18, ease: 'easeOut' }}
             >
-              {/* Device card — hero for the elder's phone */}
-              <div className="relative overflow-hidden bg-card rounded-[24px] p-5 border border-border shadow-sm mb-6">
-                <div className="pointer-events-none absolute -right-12 -top-14 w-44 h-44 rounded-full bg-gradient-to-br from-cyan-400/15 to-blue-500/10" />
-                <div className="pointer-events-none absolute -left-10 -bottom-16 w-36 h-36 rounded-full bg-emerald-400/10" />
-                <div className="relative flex items-center gap-3.5">
-                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white shadow-md shadow-cyan-500/25">
-                    <Smartphone className="w-5.5 h-5.5" />
+              {/* Device strip — compact status card */}
+              <div className="relative overflow-hidden bg-card rounded-[20px] border border-border shadow-sm px-4 py-3.5 mb-4 flex items-center gap-3">
+                <div className="pointer-events-none absolute -right-10 -top-12 w-32 h-32 rounded-full bg-gradient-to-br from-cyan-400/15 to-blue-500/10" />
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white shadow-sm shrink-0">
+                  <Smartphone className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[14px] font-semibold leading-tight truncate">
+                    {name || 'Elder device'}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[15px] font-semibold leading-tight">
-                      {(role || name) ? [role, name].filter(Boolean).join(' · ') : 'Connected device'}
-                    </div>
-                    <div className="text-[13px] text-muted-foreground font-mono">{deviceId}</div>
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5 min-w-0">
+                    <span className="font-mono">{deviceId}</span>
                     {deviceStatus && (
-                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-1">
-                        <Battery className={cn("w-3.5 h-3.5", (deviceStatus.battery ?? 0) < 20 ? "text-red-500" : "text-emerald-500")} />
-                        <span>{deviceStatus.battery ?? '–'}%{deviceStatus.charging ? ' · charging' : ''}</span>
-                        <span className="w-1 h-1 rounded-full bg-muted-foreground/40" />
-                        <span>Last seen {new Date(deviceStatus.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                      </div>
+                      <>
+                        <span className="w-0.5 h-0.5 rounded-full bg-muted-foreground/50 shrink-0" />
+                        <Battery className={cn("w-3 h-3 shrink-0", (deviceStatus.battery ?? 0) < 20 ? "text-red-500" : "text-emerald-500")} />
+                        <span className="shrink-0">{deviceStatus.battery ?? '–'}%{deviceStatus.charging ? ' · charging' : ''}</span>
+                        <span className="w-0.5 h-0.5 rounded-full bg-muted-foreground/50 shrink-0" />
+                        <span className="truncate">Seen {new Date(deviceStatus.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </>
                     )}
                   </div>
-                  <div className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-full",
-                    connected ? "bg-emerald-500/10" : "bg-amber-500/10"
+                </div>
+                <div className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full shrink-0",
+                  connected ? "bg-emerald-500/10" : "bg-amber-500/10"
+                )}>
+                  <span className={cn(
+                    "w-2 h-2 rounded-full",
+                    connected ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
+                  )} />
+                  <span className={cn(
+                    "text-[11px] font-bold",
+                    connected ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600"
                   )}>
-                    <span className={cn(
-                      "w-2 h-2 rounded-full",
-                      connected ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
-                    )} />
-                    <span className={cn(
-                      "text-[12px] font-semibold",
-                      connected ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600"
-                    )}>
-                      {connected ? 'ONLINE' : 'AWAY'}
-                    </span>
-                  </div>
+                    {connected ? 'ONLINE' : 'AWAY'}
+                  </span>
                 </div>
               </div>
 
+              {/* Quick actions */}
+              <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-1 mb-2.5">
+                Quick Actions
+              </h2>
+              <div className="grid grid-cols-2 gap-2.5 mb-3">
+                <QuickTile icon={<Phone className="w-5 h-5" />} label="Call" color="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" onClick={() => runCommand("CALLME", "Call device")} />
+                <QuickTile icon={<Bell className="w-5 h-5" />} label="Ring" color="bg-blue-500/10 text-blue-500" onClick={() => runCommand("RING", "Ring device")} />
+
+                {/* Flashlight — true toggle (optimistic state) */}
+                <button
+                  onClick={toggleFlash}
+                  aria-pressed={flashOn}
+                  className={cn(
+                    "flex items-center gap-3 rounded-2xl border shadow-sm px-4 py-3.5 active:scale-[0.97] transition-all duration-150 cursor-pointer",
+                    flashOn ? "bg-amber-500/15 border-amber-500/40" : "bg-card border-border hover:bg-muted/40"
+                  )}
+                >
+                  <div className={cn(
+                    "w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors duration-150",
+                    flashOn ? "bg-amber-500 text-white" : "bg-amber-500/10 text-amber-500"
+                  )}>
+                    <Zap className={cn("w-5 h-5", flashOn && "fill-current")} />
+                  </div>
+                  <div className="flex-1 min-w-0 text-left">
+                    <div className="text-[13px] font-medium leading-tight">{flashOn ? 'Flashlight on' : 'Flashlight'}</div>
+                    <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider mt-0.5">
+                      <span className={cn("w-1.5 h-1.5 rounded-full", flashOn ? "bg-amber-500 animate-pulse" : "bg-muted-foreground/40")} />
+                      <span className={flashOn ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}>
+                        {flashOn ? 'On' : 'Off'}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+
+                <QuickTile icon={<Pill className="w-5 h-5" />} label="Meds" color="bg-rose-500/10 text-rose-500" onClick={() => runCommand("MEDR", "Send medicine reminder")} />
+                <QuickTile icon={<MapPin className="w-5 h-5" />} label="Locate" color="bg-blue-500/10 text-blue-500" onClick={locate} />
+                <QuickTile icon={<MessageSquare className="w-5 h-5" />} label="Check-in" color="bg-teal-500/10 text-teal-600 dark:text-teal-400" onClick={() => runCommand("CHECKIN", "Check-in")} />
+              </div>
+
+              {/* Mi Band — opens the companion app on THIS phone */}
+              <button
+                onClick={openMiBand}
+                className="w-full h-12 mb-4 rounded-2xl bg-card border border-border shadow-sm flex items-center gap-3 px-4 active:scale-[0.98] transition-all duration-150 cursor-pointer hover:bg-muted/40"
+              >
+                <span className="w-8 h-8 rounded-lg bg-[#0A84FF]/10 text-[#0A84FF] flex items-center justify-center shrink-0">
+                  <Watch className="w-4 h-4" />
+                </span>
+                <span className="text-[14px] font-semibold flex-1 text-left truncate">Open Mi Band app</span>
+                <span className="text-[10px] font-mono text-muted-foreground shrink-0">on this phone</span>
+              </button>
+
+              {/* Emergency — one prominent slide action */}
+              <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-1 mb-2.5">
+                Emergency
+              </h2>
+              <div className="mb-4">
+                <SlideButton
+                  label="Slide to SOS"
+                  onSuccess={() => runCommand("SOS", "Emergency SOS")}
+                  color="bg-[#FF3B30]"
+                  icon={<Shield className="w-6 h-6 text-white" />}
+                />
+              </div>
+
               {/* Live location card */}
-              <div className="bg-card rounded-[24px] p-5 border border-border shadow-sm mb-6 overflow-hidden relative">
+              <div className="bg-card rounded-[20px] p-4 border border-border shadow-sm mb-4 overflow-hidden relative">
                 <div className="absolute -right-8 -top-8 w-32 h-32 rounded-full bg-blue-500/5 pointer-events-none" />
                 <div className="flex items-center justify-between mb-1">
-                  <h2 className="text-[15px] font-semibold flex items-center gap-2">
+                  <h2 className="text-[14px] font-semibold flex items-center gap-1.5">
                     <MapPin className="w-4 h-4 text-blue-500" /> Location
                   </h2>
                   {lastLoc && (
@@ -387,8 +523,8 @@ export function CaretakerDashboard() {
                 </div>
 
                 {locLat != null && locLng != null ? (
-                  <div className="mt-3 rounded-2xl bg-blue-500/10 border border-blue-500/20 p-4">
-                    <div className="font-mono text-[22px] font-bold tracking-tight text-foreground leading-tight">
+                  <div className="mt-2.5 rounded-2xl bg-blue-500/10 border border-blue-500/20 p-3.5">
+                    <div className="font-mono text-[20px] font-bold tracking-tight text-foreground leading-tight">
                       {locLat.toFixed(5)}, {locLng.toFixed(5)}
                     </div>
                     <div className="text-[12px] text-muted-foreground mt-1">
@@ -400,18 +536,16 @@ export function CaretakerDashboard() {
                     <a
                       href={`https://maps.google.com/?q=${locLat},${locLng}`}
                       target="_blank" rel="noreferrer"
-                      className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-cyan-700 dark:text-cyan-300 cursor-pointer transition-colors hover:text-cyan-600"
+                      className="mt-2.5 inline-flex items-center gap-1.5 text-[13px] font-semibold text-cyan-700 dark:text-cyan-300 cursor-pointer transition-colors hover:text-cyan-600"
                     >
                       Open in Google Maps <ArrowUpRight className="w-3.5 h-3.5" />
                     </a>
                   </div>
-                ) : lastLoc ? (
-                  <p className="mt-3 text-[13px] text-muted-foreground whitespace-pre-line">{lastLoc.reply}</p>
                 ) : (
-                  <p className="mt-3 text-[13px] text-muted-foreground">
+                  <p className="mt-2.5 text-[12px] text-muted-foreground">
                     {connected
-                      ? 'No location yet — slide "Locate" above to fetch the elder position here.'
-                      : 'Connect to a device, then slide "Locate" to see their position here.'}
+                      ? 'Tap "Locate" above to fetch the elder position here.'
+                      : 'Connect to a device, then tap "Locate" to see their position here.'}
                   </p>
                 )}
               </div>
@@ -424,73 +558,6 @@ export function CaretakerDashboard() {
                 connected={connected}
                 onSimulate={handleSimulate}
               />
-
-              {/* Primary actions */}
-              <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-1 mb-3">
-                Primary Actions
-              </h2>
-              <div className="space-y-3 mb-6">
-                <SlideButton
-                  label="Slide to SOS"
-                  onSuccess={() => runCommand("SOS", "Emergency SOS")}
-                  color="bg-[#FF3B30]"
-                  icon={<Shield className="w-6 h-6 text-white" />}
-                />
-                <SlideButton
-                  label="Slide to Locate"
-                  onSuccess={locate}
-                  color="bg-[#0A84FF]"
-                  icon={<MapPin className="w-6 h-6 text-white" />}
-                />
-              </div>
-
-              {/* Quick actions */}
-              <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-1 mb-3">
-                Quick Actions
-              </h2>
-              <div className="grid grid-cols-2 gap-3 mb-6">
-                <QuickTile icon={<Phone      className="w-5 h-5" />} label="Call"       color="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" onClick={() => runCommand("CALLME",   "Call device")} />
-                <QuickTile icon={<Bell       className="w-5 h-5" />} label="Ring"       color="bg-blue-500/10 text-blue-500"    onClick={() => runCommand("RING",     "Ring device")} />
-                <QuickTile
-                  icon={<Zap className={cn("w-5 h-5", torchOn && "fill-current")} />}
-                  label={torchOn ? 'Flashlight ON' : 'Flashlight'}
-                  color={torchOn ? "bg-amber-500/25 text-amber-500" : "bg-amber-500/10 text-amber-500"}
-                  onClick={() => runCommand(torchOn ? "TORCHOFF" : "TORCHON", torchOn ? "Flashlight OFF" : "Flashlight ON")}
-                />
-                <QuickTile icon={<MessageSquare className="w-5 h-5" />} label="Check-in" color="bg-teal-500/10 text-teal-600 dark:text-teal-400" onClick={() => runCommand("CHECKIN", "Check-in")} />
-              </div>
-
-              {/* Utility row */}
-              <div className="flex gap-3 mb-6">
-                <button
-                  onClick={() => runCommand("MEDR", "Send medicine reminder")}
-                  className="flex-1 h-12 rounded-2xl bg-card border border-border shadow-sm flex items-center justify-center gap-2 text-[15px] font-medium active:scale-[0.98] transition-transform"
-                >
-                  <Pill className="w-4 h-4 text-rose-500" /> Meds
-                </button>
-                <button
-                  onClick={() => runCommand("BATNOW", "Battery level")}
-                  className="flex-1 h-12 rounded-2xl bg-card border border-border shadow-sm flex items-center justify-center gap-2 text-[15px] font-medium active:scale-[0.98] transition-all duration-150 cursor-pointer hover:bg-muted/50"
-                >
-                  <BatteryLow className="w-4 h-4 text-amber-500" /> Battery
-                </button>
-                <button
-                  onClick={() => runCommand("PING", "Check device is reachable")}
-                  className="flex-1 h-12 rounded-2xl bg-card border border-border shadow-sm flex items-center justify-center gap-2 text-[15px] font-medium text-cyan-600 dark:text-cyan-400 active:scale-[0.98] transition-all duration-150 cursor-pointer hover:bg-muted/50"
-                >
-                  <Wifi className="w-4 h-4" /> Ping
-                </button>
-              </div>
-
-              {/* Mi Band app — opens the wearable app on the elder's phone */}
-              <button
-                onClick={() => runCommand("OPENAPP com.mc.miband1", "Open Mi Band app")}
-                className="w-full h-14 rounded-2xl bg-gradient-to-r from-[#0A84FF]/15 to-[#5AC8FA]/10 border border-[#0A84FF]/25 shadow-sm flex items-center justify-center gap-3 text-[16px] font-semibold text-[#0A84FF] dark:text-[#5AC8FA] active:scale-[0.98] transition-all duration-150 cursor-pointer hover:from-[#0A84FF]/25 hover:to-[#5AC8FA]/20 mb-6"
-              >
-                <Watch className="w-5 h-5" />
-                Open Mi Band app
-                <span className="text-[11px] font-mono font-normal text-muted-foreground">com.mc.miband1</span>
-              </button>
 
               {/* Command history (from Firebase) */}
               <h2 className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wide ml-1 mb-3">
@@ -625,7 +692,7 @@ export function CaretakerDashboard() {
                 })}
                 {filteredCategories.length === 0 && (
                   <div className="bg-card/50 rounded-2xl border border-dashed border-border p-6 text-center">
-                    <p className="text-sm text-muted-foreground">No commands match "{searchQuery}".</p>
+                    <p className="text-sm text-muted-foreground">No commands match &quot;{searchQuery}&quot;.</p>
                   </div>
                 )}
               </div>

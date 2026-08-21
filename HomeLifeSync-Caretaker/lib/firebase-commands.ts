@@ -21,12 +21,13 @@
  */
 
 import {
-  ref, set, onValue, off, push, get, onChildAdded,
-  serverTimestamp, DataSnapshot
+  ref, set, update, onValue, off, push, get, onChildAdded, query, limitToLast,
+  DataSnapshot
 } from 'firebase/database';
 import { getFirebaseDb } from './firebase';
 import { v4 as uuidv4 } from 'uuid';
 import type { HeartAlert } from './commands';
+import type { Vitals } from './health';
 
 export type DeviceStatus = {
   lastSeen:  number;
@@ -47,6 +48,12 @@ export type DeviceStatus = {
   glucose?:         number;
   heartCondition?:  string;
   heartSeverity?:   string;
+  // Home-automation state pushed by the elder (HomeHandler) + SOS flag
+  livingLight?: boolean;
+  bedLight?:    boolean;
+  fan?:         boolean;
+  doorLocked?:  boolean;
+  sos?:         boolean;
 };
 
 export type CommandReply = {
@@ -120,6 +127,53 @@ export function waitForReply(
   });
 }
 
+// ── Broadcast a health event to every watcher ────────────────────────
+// The caretaker OWNS simulations, so when one fires it must reach the
+// elder phone AND every tablet/hub. We publish the exact same shape the
+// elder's HealthHandler.pushStatus() writes, plus a /alerts entry (like
+// its writeAlert()) so all subscribers wake up even if the elder device
+// is offline or slow to process the command.
+export async function publishHealthEvent(
+  deviceId: string,
+  condition: string,
+  severity: string,
+  vitals: Vitals
+): Promise<void> {
+  const db = getFirebaseDb();
+
+  await update(
+    ref(db, `devices/${deviceId}/status`),
+    {
+      heartRate:       vitals.heartRate,
+      spo2:            vitals.spo2,
+      temperature:     vitals.temperature,
+      respiratoryRate: vitals.respiratoryRate,
+      systolic:        vitals.systolic,
+      diastolic:       vitals.diastolic,
+      glucose:         vitals.glucose,
+      heartCondition:  condition,
+      heartSeverity:   severity,
+    }
+  );
+
+  // Only a real condition gets an alert entry — OK just clears the panel.
+  if (severity !== 'OK') {
+    push(ref(db, `devices/${deviceId}/alerts`), {
+      type:       'HEALTH',
+      condition,
+      severity,
+      ts:         Date.now(),
+      heartRate:       vitals.heartRate,
+      spo2:            vitals.spo2,
+      temperature:     vitals.temperature,
+      respiratoryRate: vitals.respiratoryRate,
+      systolic:        vitals.systolic,
+      diastolic:       vitals.diastolic,
+      glucose:         vitals.glucose,
+    });
+  }
+}
+
 // ── Subscribe to live device status ─────────────────────────────────
 
 /**
@@ -189,7 +243,13 @@ export function subscribeToAlerts(
   onAlert: (alert: HeartAlert) => void
 ): () => void {
   const db        = getFirebaseDb();
-  const alertsRef = ref(db, `devices/${deviceId}/alerts`);
+  // Bound the sync window to the newest alerts: Firebase push keys sort
+  // chronologically, so limitToLast keeps re-attaches (reload / reconnect)
+  // from downloading the whole history — the elder prunes the node too.
+  const alertsRef = query(
+    ref(db, `devices/${deviceId}/alerts`),
+    limitToLast(120)
+  );
 
   let cursor = loadAlertCursors()[deviceId] ?? 0;
 

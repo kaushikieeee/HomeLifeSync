@@ -18,17 +18,32 @@ type Row = {
   label: string;
   icon: ReactNode;
   unit: string;
+  tint: string;
+  range: string;
   color: (v: number) => string;
+  ok: (v: number) => boolean;
 };
 
 const VITAL_ROWS: Row[] = [
-  { key: 'heartRate',       label: 'Heart rate',       icon: <Heart className="w-4 h-4" />, unit: 'bpm',     color: v => v < 60 || v > 100 ? 'text-red-500' : 'text-emerald-500' },
-  { key: 'spo2',            label: 'O₂ saturation',    icon: <Droplets className="w-4 h-4" />, unit: '%',     color: v => v < 95 ? 'text-red-500' : 'text-emerald-500' },
-  { key: 'temperature',     label: 'Temperature',      icon: <Thermometer className="w-4 h-4" />, unit: '°C', color: v => v < 36.1 || v > 37.2 ? 'text-red-500' : 'text-emerald-500' },
-  { key: 'respiratoryRate', label: 'Respiration',      icon: <Wind className="w-4 h-4" />, unit: '/min',  color: v => v < 12 || v > 20 ? 'text-red-500' : 'text-emerald-500' },
-  { key: 'glucose',         label: 'Glucose',          icon: <Gauge className="w-4 h-4" />, unit: 'mg/dL', color: v => v < 70 || v > 180 ? 'text-red-500' : 'text-emerald-500' },
-  { key: 'systolic',        label: 'Blood pressure',   icon: <Activity className="w-4 h-4" />, unit: 'mmHg', color: v => v < 90 || v > 120 ? 'text-red-500' : 'text-emerald-500' },
+  { key: 'heartRate',       label: 'Heart rate',    icon: <Heart className="w-4 h-4" />, unit: 'bpm',     tint: 'bg-rose-500/10 text-rose-500',    range: '60–100 bpm',     color: v => v < 60 || v > 100 ? 'text-red-500' : 'text-emerald-500', ok: v => v >= 60 && v <= 100 },
+  { key: 'spo2',            label: 'O₂ saturation', icon: <Droplets className="w-4 h-4" />, unit: '%',    tint: 'bg-sky-500/10 text-sky-500',      range: '95–100%',         color: v => v < 95 ? 'text-red-500' : 'text-emerald-500',             ok: v => v >= 95 },
+  { key: 'temperature',     label: 'Temperature',   icon: <Thermometer className="w-4 h-4" />, unit: '°C', tint: 'bg-amber-500/10 text-amber-500',  range: '36.1–37.2 °C',    color: v => v < 36.1 || v > 37.2 ? 'text-red-500' : 'text-emerald-500', ok: v => v >= 36.1 && v <= 37.2 },
+  { key: 'respiratoryRate', label: 'Respiration',   icon: <Wind className="w-4 h-4" />, unit: '/min',  tint: 'bg-violet-500/10 text-violet-500', range: '12–20 /min',       color: v => v < 12 || v > 20 ? 'text-red-500' : 'text-emerald-500',     ok: v => v >= 12 && v <= 20 },
+  { key: 'glucose',         label: 'Glucose',       icon: <Gauge className="w-4 h-4" />, unit: 'mg/dL', tint: 'bg-cyan-500/10 text-cyan-500',    range: '70–180 mg/dL',    color: v => v < 70 || v > 180 ? 'text-red-500' : 'text-emerald-500',    ok: v => v >= 70 && v <= 180 },
+  { key: 'systolic',        label: 'Blood pressure', icon: <Activity className="w-4 h-4" />, unit: 'mmHg', tint: 'bg-teal-500/10 text-teal-500',  range: '90–120 mmHg',     color: v => v < 90 || v > 120 ? 'text-red-500' : 'text-emerald-500',    ok: v => v >= 90 && v <= 120 },
 ];
+
+function StatusLine({ ok }: { ok: boolean }) {
+  return (
+    <span className={cn(
+      "inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider",
+      ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
+    )}>
+      <span className={cn("w-1.5 h-1.5 rounded-full", ok ? "bg-emerald-500" : "bg-red-500")} />
+      {ok ? 'In range' : 'Out of range'}
+    </span>
+  );
+}
 
 const GROUPS = ['Heart', 'Oxygen', 'Temperature', 'Pressure', 'Respiratory', 'Glucose'] as const;
 
@@ -74,24 +89,76 @@ export function VitalsCard({ vitals, detected, scenarios, connected, onSimulate 
       </div>
 
       {/* Live vitals grid */}
-      <div className="grid grid-cols-3 gap-3 mb-5">
-        {VITAL_ROWS.map(row => (
-          <div key={row.key} className="rounded-2xl border border-border bg-muted/30 p-3 cursor-pointer transition-colors duration-150 hover:bg-muted/60">
-            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-1">
-              {row.icon}
-              {row.label}
-            </div>
-            <div className="flex items-baseline gap-1">
-              <span className={cn("text-[24px] font-bold font-mono leading-none", row.color(vitals[row.key]))}>{vitals[row.key]}</span>
-              <span className="text-[10px] text-muted-foreground">{row.unit}</span>
-            </div>
-            {row.key === 'systolic' && (
-              <div className="text-[12px] font-mono text-muted-foreground">/
-                <span className={vitals.diastolic < 60 || vitals.diastolic > 80 ? 'text-red-500' : 'text-emerald-500'}>{vitals.diastolic}</span>
+      <div className="mb-5">
+        {/* Heart rate hero */}
+        {(() => {
+          const hr = vitals.heartRate;
+          const hrOk = hr >= 60 && hr <= 100;
+          return (
+            <div className={cn(
+              "relative overflow-hidden rounded-[20px] border p-4 mb-3",
+              hrOk ? "border-rose-200 bg-gradient-to-br from-rose-50/80 to-rose-100/30" : "border-red-400/50 bg-gradient-to-br from-red-50 to-red-100/40"
+            )}>
+              <div className="pointer-events-none absolute -right-8 -top-10 w-36 h-36 rounded-full bg-rose-400/10" />
+              <div className="relative flex items-center gap-4">
+                <div className={cn(
+                  "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0",
+                  hrOk ? "bg-rose-500/15 text-rose-500" : "bg-red-500/20 text-red-600"
+                )}>
+                  <Heart className={cn("w-6 h-6", hrOk && "animate-pulse")} fill="currentColor" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-semibold">Heart rate</span>
+                    <span className="text-[10px] text-muted-foreground font-mono">60–100 bpm</span>
+                  </div>
+                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                    <span className={cn("text-[40px] font-bold font-mono leading-none tracking-tight", hrOk ? "text-rose-600 dark:text-rose-400" : "text-red-600")}>
+                      {hr}
+                    </span>
+                    <span className="text-[12px] text-muted-foreground">bpm</span>
+                  </div>
+                </div>
+                <StatusLine ok={hrOk} />
               </div>
-            )}
-          </div>
-        ))}
+            </div>
+          );
+        })()}
+
+        {/* Remaining vitals — 2×3 grid for breathing room */}
+        <div className="grid grid-cols-2 gap-3">
+          {VITAL_ROWS.filter(r => r.key !== 'heartRate').map(row => (
+            <div key={row.key} className="rounded-[16px] border border-border bg-muted/30 p-4 flex flex-col transition-colors duration-150 hover:bg-muted/60">
+              <div className="flex items-center gap-2">
+                <span className={cn("w-7 h-7 rounded-[10px] flex items-center justify-center shrink-0", row.tint)}>
+                  {row.icon}
+                </span>
+                <span className="text-[12px] font-semibold text-foreground/80 leading-tight">{row.label}</span>
+              </div>
+
+              {row.key === 'systolic' ? (
+                <div className="flex items-baseline gap-1.5 mt-3">
+                  <span className={cn("text-[28px] font-bold font-mono leading-none tracking-tight", row.color(vitals.systolic))}>{vitals.systolic}</span>
+                  <span className="text-[16px] font-bold font-mono text-muted-foreground">/</span>
+                  <span className={cn("text-[28px] font-bold font-mono leading-none tracking-tight", vitals.diastolic < 60 || vitals.diastolic > 80 ? 'text-red-500' : 'text-emerald-500')}>{vitals.diastolic}</span>
+                  <span className="text-[11px] text-muted-foreground ml-0.5">mmHg</span>
+                </div>
+              ) : (
+                <div className="flex items-baseline gap-1.5 mt-3">
+                  <span className={cn("text-[28px] font-bold font-mono leading-none tracking-tight", row.color(vitals[row.key]))}>{vitals[row.key]}</span>
+                  <span className="text-[11px] text-muted-foreground">{row.unit}</span>
+                </div>
+              )}
+
+              <div className="mt-auto pt-3 flex items-center justify-between">
+                <span className="text-[10px] text-muted-foreground font-mono">{row.range}</span>
+                <StatusLine ok={row.key === 'systolic'
+                  ? (vitals.systolic >= 90 && vitals.systolic <= 120) && (vitals.diastolic >= 60 && vitals.diastolic <= 80)
+                  : row.ok(vitals[row.key])} />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Simulation section — collapsible so the dashboard stays clean */}

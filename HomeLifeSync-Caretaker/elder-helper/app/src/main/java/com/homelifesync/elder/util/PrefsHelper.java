@@ -62,4 +62,44 @@ public class PrefsHelper {
     public void setTorchState(boolean on) {
         prefs.edit().putBoolean(Constants.PREF_TORCH, on).apply();
     }
+
+    /**
+     * Rotating 4-digit pairing code. Created once on first use and kept until
+     * rotated ("New code") or the device disconnects — the tablet must enter
+     * it together with the device ID to pair. The creation/rotation timestamp
+     * backs the 5-minute validity check on the tablet side.
+     */
+    public String getOrCreatePairingCode() {
+        String code = prefs.getString(Constants.PREF_PAIRING_CODE, null);
+        if (!PairingCode.isValid(code)) {
+            code = PairingCode.generate();
+            prefs.edit()
+                .putString(Constants.PREF_PAIRING_CODE, code)
+                .apply();
+        }
+        return code;
+    }
+
+    public String rotatePairingCode() {
+        String code = PairingCode.generate();
+        prefs.edit()
+            .putString(Constants.PREF_PAIRING_CODE, code)
+            .apply();
+        return code;
+    }
+
+    /**
+     * Disconnect from the caretaker: clear pairing state (onboarded flag,
+     * caretaker number, service-active flag, pairing code). The device ID is
+     * kept — it is this phone's identity — so re-pairing shows the same ID to
+     * share.
+     */
+    public void clearSetup() {
+        prefs.edit()
+            .remove(Constants.PREF_ONBOARDED)
+            .remove(Constants.PREF_CARETAKER_NUM)
+            .remove(Constants.PREF_SERVICE_ACTIVE)
+            .remove(Constants.PREF_PAIRING_CODE)
+            .apply();
+    }
 }

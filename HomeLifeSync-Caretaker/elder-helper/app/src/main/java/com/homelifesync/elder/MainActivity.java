@@ -24,6 +24,7 @@ import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 
@@ -31,6 +32,7 @@ import com.homelifesync.elder.firebase.FirebaseRepository;
 import com.homelifesync.elder.commands.HealthHandler;
 import com.homelifesync.elder.service.ElderHelperService;
 import com.homelifesync.elder.util.NotificationHelper;
+import com.homelifesync.elder.util.Haptics;
 import com.homelifesync.elder.util.PrefsHelper;
 
 import java.util.ArrayList;
@@ -41,11 +43,16 @@ public class MainActivity extends AppCompatActivity {
     private Button     btnToggleService;
     private Button     btnWriteSettings;
     private Button     btnDndAccess;
+    private Button     btnDisconnect;
+    private Button     btnNewCode;
     private TextView   tvStatus;
     private TextView   tvNumber;
     private TextView   tvDeviceId;
+    private TextView   tvPairCode;
     private ImageView  ivStatusDot;
     private PrefsHelper prefs;
+
+    private String pairingCode = "";   // current 4-digit code shown on screen
 
     private VitalsPanelView vitalsPanel;
     private TextView   tvHealthState;
@@ -58,17 +65,6 @@ public class MainActivity extends AppCompatActivity {
             updateVitals();
             uiHandler.postDelayed(this, 1000);
         }
-    };
-
-    private static final String[] REQUIRED_PERMISSIONS = {
-        Manifest.permission.RECEIVE_SMS,
-        Manifest.permission.SEND_SMS,
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.CAMERA,
-        Manifest.permission.VIBRATE,
-        Manifest.permission.MODIFY_AUDIO_SETTINGS,
-        Manifest.permission.CALL_PHONE,
     };
 
     private final ActivityResultLauncher<String[]> permLauncher =
@@ -94,9 +90,12 @@ public class MainActivity extends AppCompatActivity {
         btnToggleService  = findViewById(R.id.btnToggleService);
         btnWriteSettings  = findViewById(R.id.btnWriteSettings);
         btnDndAccess      = findViewById(R.id.btnDndAccess);
+        btnDisconnect     = findViewById(R.id.btnDisconnect);
+        btnNewCode        = findViewById(R.id.btnNewCode);
         tvStatus          = findViewById(R.id.tvStatus);
         tvNumber          = findViewById(R.id.tvNumber);
         tvDeviceId        = findViewById(R.id.tvDeviceId);
+        tvPairCode        = findViewById(R.id.tvPairCode);
         ivStatusDot       = findViewById(R.id.ivStatusDot);
 
         // ── Live vitals (fake heart rate + condition simulator) ──────
@@ -109,12 +108,12 @@ public class MainActivity extends AppCompatActivity {
         health.start();
         updateVitals();
 
-        findViewById(R.id.btnHrNormal).setOnClickListener(v -> { health.simulate("HRNORMAL", null); updateVitals(); Toast.makeText(this, "Heart → Normal", Toast.LENGTH_SHORT).show(); });
-        findViewById(R.id.btnHrMi).setOnClickListener(v -> { health.simulate("HRMI", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated heart attack", Toast.LENGTH_SHORT).show(); });
-        findViewById(R.id.btnHrTachy).setOnClickListener(v -> { health.simulate("HRTACHY", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated tachycardia", Toast.LENGTH_SHORT).show(); });
-        findViewById(R.id.btnHrBrady).setOnClickListener(v -> { health.simulate("HRBRADY", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated bradycardia", Toast.LENGTH_SHORT).show(); });
-        findViewById(R.id.btnHrArrhythmia).setOnClickListener(v -> { health.simulate("HRARRHY", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated arrhythmia", Toast.LENGTH_SHORT).show(); });
-        findViewById(R.id.btnHrAfib).setOnClickListener(v -> { health.simulate("HRAFIB", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated atrial fibrillation", Toast.LENGTH_SHORT).show(); });
+        findViewById(R.id.btnHrNormal).setOnClickListener(v -> { Haptics.tap(this); health.simulate("HRNORMAL", null); updateVitals(); Toast.makeText(this, "Heart → Normal", Toast.LENGTH_SHORT).show(); });
+        findViewById(R.id.btnHrMi).setOnClickListener(v -> { Haptics.tap(this); health.simulate("HRMI", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated heart attack", Toast.LENGTH_SHORT).show(); });
+        findViewById(R.id.btnHrTachy).setOnClickListener(v -> { Haptics.tap(this); health.simulate("HRTACHY", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated tachycardia", Toast.LENGTH_SHORT).show(); });
+        findViewById(R.id.btnHrBrady).setOnClickListener(v -> { Haptics.tap(this); health.simulate("HRBRADY", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated bradycardia", Toast.LENGTH_SHORT).show(); });
+        findViewById(R.id.btnHrArrhythmia).setOnClickListener(v -> { Haptics.tap(this); health.simulate("HRARRHY", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated arrhythmia", Toast.LENGTH_SHORT).show(); });
+        findViewById(R.id.btnHrAfib).setOnClickListener(v -> { Haptics.tap(this); health.simulate("HRAFIB", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated atrial fibrillation", Toast.LENGTH_SHORT).show(); });
 
         // Collapsible "Simulate" demo section (keeps the dashboard clean)
         findViewById(R.id.btnSimToggle).setOnClickListener(v -> {
@@ -129,12 +128,35 @@ public class MainActivity extends AppCompatActivity {
         String deviceId = prefs.getDeviceId();
         tvDeviceId.setText(deviceId);
         tvDeviceId.setOnClickListener(v -> {
+            Haptics.tap(this);
             ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             cm.setPrimaryClip(ClipData.newPlainText("Device ID", deviceId));
             Toast.makeText(this, "Device ID copied!", Toast.LENGTH_SHORT).show();
         });
 
+        // Temporary 4-digit pairing code — the tablet pairs with device ID +
+        // this code, verified against Firebase so a random ID isn't enough.
+        pairingCode = prefs.getOrCreatePairingCode();
+        tvPairCode.setText(pairingCode);
+        tvPairCode.setOnClickListener(v -> {
+            Haptics.tap(this);
+            ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("Pairing code", pairingCode));
+            Toast.makeText(this, "Pairing code copied!", Toast.LENGTH_SHORT).show();
+        });
+        btnNewCode.setOnClickListener(v -> {
+            Haptics.confirm(this);
+            pairingCode = prefs.rotatePairingCode();
+            tvPairCode.setText(pairingCode);
+            tvPairCode.setAlpha(0.4f);
+            tvPairCode.animate().alpha(1f).setDuration(400).start();
+            publishPairingCode(pairingCode);
+            Toast.makeText(this, "New pairing code generated", Toast.LENGTH_SHORT).show();
+        });
+        publishPairingCode(pairingCode);
+
         btnToggleService.setOnClickListener(v -> {
+            Haptics.tap(this);
             if (ElderHelperService.isRunning) {
                 stopService(new Intent(this, ElderHelperService.class));
                 prefs.setServiceActive(false);
@@ -163,6 +185,15 @@ public class MainActivity extends AppCompatActivity {
                 startActivity(new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS));
             }
         });
+
+        btnDisconnect.setOnClickListener(v -> confirmDisconnect());
+
+        // SMS-fallback number row — tapping it always lets the caregiver
+        // add/change the number, even on installs that were set up before
+        // the number step existed (so it is never "missing" from setup).
+        tvNumber.setOnClickListener(v -> showNumberDialog());
+        tvNumber.setBackgroundResource(android.R.drawable.list_selector_background);
+        tvNumber.setClickable(true);
 
         handleIncomingIntent(getIntent());
 
@@ -198,6 +229,65 @@ public class MainActivity extends AppCompatActivity {
         updateUI();
     }
 
+    // ── Disconnect from caretaker (re-pair) ──────────────────────────
+
+    private void showNumberDialog() {
+        androidx.appcompat.app.AlertDialog.Builder b =
+            new androidx.appcompat.app.AlertDialog.Builder(this);
+        b.setTitle("Caretaker / caregiver number");
+        b.setMessage("Used for the SMS fallback (commands still arrive without internet) "
+            + "and the one-tap CALLME alert.");
+
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        input.setHint("e.g. +919597140692");
+        input.setTypeface(android.graphics.Typeface.MONOSPACE);
+        String current = prefs.getCaretakerNumber();
+        if (!TextUtils.isEmpty(current)) input.setText(current);
+        b.setView(input, 48, 24, 48, 24);
+
+        b.setPositiveButton("Save", (d, w) -> {
+            String n = normalizeNumber(input.getText().toString());
+            if (n == null) {
+                Toast.makeText(this,
+                    "Enter a valid number (10+ digits) — e.g. +919597140692",
+                    Toast.LENGTH_LONG).show();
+                return;
+            }
+            prefs.saveCaretakerNumber(n);
+            updateUI();
+            Toast.makeText(this, "SMS fallback number saved", Toast.LENGTH_SHORT).show();
+        });
+        b.setNegativeButton("Cancel", null);
+        b.show();
+        input.requestFocus();
+    }
+
+    static String normalizeNumber(String raw) {
+        if (raw == null) return null;
+        String t = raw.trim().replaceAll("[\\s\\-().]", "");
+        String digits = t.replaceAll("[^0-9]", "");
+        return digits.length() >= 10 ? t : null;
+    }
+
+    private void confirmDisconnect() {
+        Haptics.tap(this);
+        new AlertDialog.Builder(this)
+            .setTitle("Disconnect from caretaker?")
+            .setMessage("The service will stop and the saved caretaker number will be cleared. Next launch will ask you to pair again. Your device ID stays the same.")
+            .setPositiveButton("Disconnect", (d, w) -> disconnect())
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void disconnect() {
+        stopService(new Intent(this, ElderHelperService.class));
+        prefs.clearSetup();
+        Toast.makeText(this, "Disconnected — re-pair on next launch", Toast.LENGTH_SHORT).show();
+        startActivity(new Intent(this, WizardActivity.class));
+        finish();
+    }
+
     // ── IOK from check-in notification tap ──────────────────────────
 
     private void handleIncomingIntent(Intent intent) {
@@ -218,11 +308,21 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // ── Pairing code publish (best effort — tablet verifies it) ────
+
+    private void publishPairingCode(String code) {
+        try {
+            FirebaseRepository.get(this).writePairingCode(code);
+        } catch (Exception ignored) {
+            // Firebase not ready — service start will publish again.
+        }
+    }
+
     // ── Permission + service start ───────────────────────────────────
 
     private void requestPermissionsAndStart() {
         List<String> missing = new ArrayList<>();
-        for (String p : REQUIRED_PERMISSIONS) {
+        for (String p : Constants.REQUIRED_PERMISSIONS) {
             if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED)
                 missing.add(p);
         }
@@ -236,6 +336,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startHelperService() {
+        Haptics.confirm(this);
         Intent svc = new Intent(this, ElderHelperService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             startForegroundService(svc);
@@ -281,8 +382,11 @@ public class MainActivity extends AppCompatActivity {
         ivStatusDot.setColorFilter(statusColor);
         btnToggleService.setText(running ? "Stop Service" : "Start Service");
         String num = prefs.getCaretakerNumber();
-        tvNumber.setText(TextUtils.isEmpty(num)
-            ? "SMS fallback: not configured"
-            : "SMS fallback: " + num);
+        boolean configured = !TextUtils.isEmpty(num);
+        tvNumber.setText(configured
+            ? "SMS fallback: " + num + "  ·  tap to change"
+            : "SMS fallback: not set  ·  tap to add");
+        tvNumber.setTextColor(ContextCompat.getColor(this,
+            configured ? R.color.text_secondary : R.color.status_stopped));
     }
 }

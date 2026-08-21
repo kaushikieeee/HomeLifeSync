@@ -5,7 +5,9 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.EditText;
@@ -20,6 +22,7 @@ import androidx.core.content.ContextCompat;
 
 import com.google.android.material.button.MaterialButton;
 import com.homelifesync.elder.service.ElderHelperService;
+import com.homelifesync.elder.util.Haptics;
 import com.homelifesync.elder.util.PrefsHelper;
 
 import java.util.ArrayList;
@@ -34,23 +37,11 @@ import java.util.List;
  */
 public class WizardActivity extends AppCompatActivity {
 
-    private static final String[] REQUIRED_PERMISSIONS = {
-        Manifest.permission.RECEIVE_SMS,
-        Manifest.permission.SEND_SMS,
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.CAMERA,
-        Manifest.permission.RECORD_AUDIO,
-        Manifest.permission.VIBRATE,
-        Manifest.permission.MODIFY_AUDIO_SETTINGS,
-        Manifest.permission.CALL_PHONE,
-    };
-
     private PrefsHelper prefs;
 
     private LinearLayout stepWelcome, stepDevice, stepNumber, stepPerms;
     private View[]       dots;
-    private TextView     tvStepTitle, tvWizDeviceId;
+    private TextView     tvStepTitle, tvWizDeviceId, tvNumHint;
     private EditText     etWizNumber;
     private MaterialButton btnWizBack, btnWizNext;
 
@@ -73,9 +64,25 @@ public class WizardActivity extends AppCompatActivity {
         stepDevice  = findViewById(R.id.stepDevice);
         stepNumber  = findViewById(R.id.stepNumber);
         stepPerms   = findViewById(R.id.stepPerms);
+        MaterialButton btnWizFullScreen = findViewById(R.id.btnWizFullScreen);
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            btnWizFullScreen.setVisibility(View.VISIBLE);
+            btnWizFullScreen.setOnClickListener(v -> {
+                Intent s = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT);
+                s.setData(Uri.parse("package:" + getPackageName()));
+                try {
+                    startActivity(s);
+                } catch (Exception e) {
+                    Toast.makeText(this,
+                        "Full-screen alerts may need enabling in System Settings → Apps → Special app access.",
+                        Toast.LENGTH_LONG).show();
+                }
+            });
+        }
         tvStepTitle = findViewById(R.id.tvStepTitle);
         tvWizDeviceId = findViewById(R.id.tvWizDeviceId);
         etWizNumber = findViewById(R.id.etWizNumber);
+        tvNumHint   = findViewById(R.id.tvNumHint);
         btnWizBack  = findViewById(R.id.btnWizBack);
         btnWizNext  = findViewById(R.id.btnWizNext);
         dots = new View[] {
@@ -87,29 +94,37 @@ public class WizardActivity extends AppCompatActivity {
         String saved = prefs.getCaretakerNumber();
         if (!TextUtils.isEmpty(saved)) etWizNumber.setText(saved);
 
+        // Live validation on the caretaker-number step: the Continue button
+        // stays disabled until a valid number is entered, so the elder can
+        // NEVER get stuck (or silently skip) the SMS-fallback requirement.
+        etWizNumber.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(android.text.Editable s) {
+                if (step == 2) refreshNumberStep();
+            }
+        });
+
         findViewById(R.id.btnWizCopy).setOnClickListener(v -> {
+            Haptics.tap(this);
             ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             cm.setPrimaryClip(ClipData.newPlainText("Device ID", prefs.getDeviceId()));
             Toast.makeText(this, "Device ID copied", Toast.LENGTH_SHORT).show();
         });
 
         btnWizBack.setOnClickListener(v -> {
+            Haptics.tap(this);
             if (step > 0) showStep(step - 1);
         });
 
         btnWizNext.setOnClickListener(v -> {
+            Haptics.tap(this);
             if (step == 2) {
-                // Caretaker number is MANDATORY — it powers SMS fallback and
-                // CALLME, so we refuse to continue until a valid number is set.
+                // Caretaker number is REQUIRED — it powers SMS fallback and
+                // CALLME, so the flow refuses to advance without a valid one
+                // (the button is disabled until then, no dead-end errors).
                 String n = validateNumber(etWizNumber.getText().toString());
-                if (n == null) {
-                    etWizNumber.setError("Caretaker number is required (10+ digits)");
-                    Toast.makeText(this,
-                        "⚠️ Your caregiver's phone number is required — it enables\n" +
-                        "the SMS fallback and one-tap CALLME for the elder.",
-                        Toast.LENGTH_LONG).show();
-                    return;
-                }
+                if (n == null) return;
                 prefs.saveCaretakerNumber(n);
             }
             if (step == STEP_COUNT - 1) {
@@ -123,12 +138,13 @@ public class WizardActivity extends AppCompatActivity {
     }
 
     /**
-     * Validates + normalises a phone number. Returns null when invalid, so the
-     * wizard walls the user into entering a real caregiver number (required).
+     * Validates + normalises a phone number. Strips spaces/dashes/parentheses
+     * (keeps a leading "+") and requires 10+ digits. Returns null when invalid,
+     * so the wizard can gate the Continue button on a real caregiver number.
      */
     private String validateNumber(String raw) {
         if (raw == null) return null;
-        String t = raw.trim();
+        String t = raw.trim().replaceAll("[\\s\\-().]", "");
         String digits = t.replaceAll("[^0-9]", "");
         return digits.length() >= 10 ? t : null;
     }
@@ -140,16 +156,55 @@ public class WizardActivity extends AppCompatActivity {
         stepNumber.setVisibility(next == 2 ? View.VISIBLE : View.GONE);
         stepPerms.setVisibility(next == 3 ? View.VISIBLE : View.GONE);
 
+        // Fluid entrance — the step that appears fades in with a gentle lift;
+        // the progress dots pulse toward the current step.
+        View incoming = next == 0 ? stepWelcome
+                       : next == 1 ? stepDevice
+                       : next == 2 ? stepNumber : stepPerms;
+        incoming.setAlpha(0f);
+        incoming.setTranslationY(28f);
+        incoming.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(280)
+            .start();
+
         String[] titles = { "Welcome", "Device ID", "Caretaker number (required)", "Permissions" };
         tvStepTitle.setText(titles[next]);
 
         for (int i = 0; i < dots.length; i++) {
             dots[i].setBackgroundColor(ContextCompat.getColor(this,
                 i <= next ? R.color.primary : R.color.surface_hint));
+            dots[i].animate()
+                .scaleX(i == next ? 1.3f : 1f)
+                .scaleY(i == next ? 1.3f : 1f)
+                .setDuration(200)
+                .start();
         }
 
         btnWizBack.setEnabled(next > 0);
         btnWizNext.setText(next == STEP_COUNT - 1 ? "Allow & Finish" : "Continue");
+
+        // The number step holds the flow until a valid number is entered.
+        // Every other step always allows advancing.
+        if (next == 2) {
+            refreshNumberStep();
+        } else {
+            btnWizNext.setEnabled(true);
+            if (tvNumHint != null) tvNumHint.setVisibility(View.GONE);
+        }
+    }
+
+    /** Live helper under the number field + Continue gating. */
+    private void refreshNumberStep() {
+        tvNumHint.setVisibility(View.VISIBLE);
+        boolean ok = validateNumber(etWizNumber.getText().toString()) != null;
+        btnWizNext.setEnabled(ok);
+        tvNumHint.setText(ok
+            ? "✓ Saved — powers SMS fallback and one-tap CALLME"
+            : "Required: enter your caregiver's phone number (10+ digits)");
+        tvNumHint.setTextColor(ContextCompat.getColor(this,
+            ok ? R.color.status_active : R.color.status_stopped));
     }
 
     private void finishSetup() {
@@ -159,7 +214,7 @@ public class WizardActivity extends AppCompatActivity {
         prefs.setOnboarded();
 
         List<String> missing = new ArrayList<>();
-        for (String p : REQUIRED_PERMISSIONS) {
+        for (String p : Constants.REQUIRED_PERMISSIONS) {
             if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED)
                 missing.add(p);
         }
@@ -178,6 +233,7 @@ public class WizardActivity extends AppCompatActivity {
     }
 
     private void complete() {
+        Haptics.success(this);
         prefs.setServiceActive(true);
         startForegroundServiceSafe();
         Toast.makeText(this, "Setup complete — you're connected 🎉", Toast.LENGTH_LONG).show();

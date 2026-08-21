@@ -154,20 +154,6 @@ public class FirebaseRepository {
         }
     }
 
-    // ── FCM token ────────────────────────────────────────────────────
-
-    public void saveOwnFcmToken(String token) {
-        deviceRef.child(Constants.DB_FCM_TOKEN).setValue(token)
-            .addOnSuccessListener(v -> Log.d(TAG, "FCM token saved"))
-            .addOnFailureListener(e -> Log.e(TAG, "FCM token save failed", e));
-    }
-
-    public void refreshAndSaveFcmToken() {
-        FirebaseMessaging.getInstance().getToken()
-            .addOnSuccessListener(this::saveOwnFcmToken)
-            .addOnFailureListener(e -> Log.e(TAG, "FCM token fetch failed", e));
-    }
-
     // ── Command reply ────────────────────────────────────────────────
 
     /**
@@ -203,6 +189,22 @@ public class FirebaseRepository {
             .setValue(System.currentTimeMillis());
     }
 
+    // ── Temporary pairing code ──────────────────────────────────────
+
+    /**
+     * Publish the rotating 4-digit pairing code under /devices/{id}/pairingCode
+     * with a timestamp. The tablet reads this node and refuses to pair unless
+     * the code matches and is younger than PAIRING_TTL_MS.
+     */
+    public void writePairingCode(String code) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("code", code);
+        data.put("ts",   System.currentTimeMillis());
+        deviceRef.child(Constants.DB_PAIRING).setValue(data)
+            .addOnSuccessListener(v -> Log.d(TAG, "Pairing code published: " + code))
+            .addOnFailureListener(e -> Log.e(TAG, "Pairing code publish failed", e));
+    }
+
     // ── Health alerts ────────────────────────────────────────────────
 
     /**
@@ -219,8 +221,29 @@ public class FirebaseRepository {
         data.put("ts", System.currentTimeMillis());
         if (vitals != null) data.putAll(vitals);
         alertRef.setValue(data)
-            .addOnSuccessListener(v -> Log.d(TAG, "Alert written: " + condition))
+            .addOnSuccessListener(v -> {
+                Log.d(TAG, "Alert written: " + condition);
+                pruneAlerts();
+            })
             .addOnFailureListener(e -> Log.e(TAG, "Alert write failed", e));
+    }
+
+    /**
+     * Keep /alerts bounded. Each app reload re-subscribes and re-syncs the
+     * whole node (onChildAdded replays every child), so an ever-growing log
+     * slows every wake-up. Firebase push keys sort chronologically, so
+     * deleting the lexicographically-first 25 children removes the OLDEST
+     * 25 — orderByKey needs no .indexOn rule. The node stabilizes around
+     * ~50-100 entries even with heavy demo use.
+     */
+    private void pruneAlerts() {
+        deviceRef.child("alerts").orderByKey().limitToFirst(25).get()
+            .addOnSuccessListener(snap -> {
+                for (DataSnapshot child : snap.getChildren()) {
+                    child.getRef().removeValue();
+                }
+            })
+            .addOnFailureListener(e -> Log.d(TAG, "Alert prune skipped: " + e.getMessage()));
     }
 
     // ── Accessors ────────────────────────────────────────────────────

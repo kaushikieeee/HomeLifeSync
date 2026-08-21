@@ -93,6 +93,19 @@ public class HomeHandler {
             sb.append(e.getKey()).append(':').append(e.getValue());
         }
         prefs.getPrefs().edit().putString(KEY_STATE, sb.toString()).apply();
+
+        // Mirror the new state to /status so tablets/hubs see it in real time.
+        java.util.Map<String, Object> m = new java.util.HashMap<>();
+        m.put("livingLight", "1".equals(deviceState("living", "0")));
+        m.put("bedLight",    "1".equals(deviceState("bed", "0")));
+        m.put("fan",         "1".equals(deviceState("fan", "0")));
+        m.put("doorLocked",  "locked".equals(deviceState("door", "locked")));
+        m.put("acState",     deviceState("ac", "off"));
+        try {
+            com.homelifesync.elder.firebase.FirebaseRepository.get(context).updateStatus(m);
+        } catch (Exception ignored) {
+            // status push is best-effort — the virtual state already persisted
+        }
     }
 
     private String deviceState(String device, String def) {

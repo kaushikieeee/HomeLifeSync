@@ -10,7 +10,8 @@ const config: CapacitorConfig = {
   webDir: '../HomeLifeSync-Caretaker/out',
   server: {
     androidScheme: 'https',
-    cleartext: true
+    cleartext: true,
+    url: 'https://localhost/tablet/'
   },
   android: {
     allowMixedContent: true,

@@ -224,6 +224,18 @@
                     android:layout_width="match_parent"
                     android:layout_height="330dp"
                     android:layout_marginTop="8dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSetAllNormal"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="12dp"
+                    android:text="Set All Vitals to Normal"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="12dp"
+                    android:backgroundTint="@color/accent"
+                    android:textColor="@android:color/white" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 

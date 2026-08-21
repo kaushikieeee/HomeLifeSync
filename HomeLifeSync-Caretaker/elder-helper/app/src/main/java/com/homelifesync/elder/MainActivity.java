@@ -109,6 +109,7 @@ public class MainActivity extends AppCompatActivity {
         updateVitals();
 
         findViewById(R.id.btnHrNormal).setOnClickListener(v -> { Haptics.tap(this); health.simulate("HRNORMAL", null); updateVitals(); Toast.makeText(this, "Heart → Normal", Toast.LENGTH_SHORT).show(); });
+        findViewById(R.id.btnSetAllNormal).setOnClickListener(v -> { Haptics.confirm(this); health.simulate("HRNORMAL", null); updateVitals(); Toast.makeText(this, "All vitals → Normal", Toast.LENGTH_SHORT).show(); });
         findViewById(R.id.btnHrMi).setOnClickListener(v -> { Haptics.tap(this); health.simulate("HRMI", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated heart attack", Toast.LENGTH_SHORT).show(); });
         findViewById(R.id.btnHrTachy).setOnClickListener(v -> { Haptics.tap(this); health.simulate("HRTACHY", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated tachycardia", Toast.LENGTH_SHORT).show(); });
         findViewById(R.id.btnHrBrady).setOnClickListener(v -> { Haptics.tap(this); health.simulate("HRBRADY", null); updateVitals(); Toast.makeText(this, "⚠️ Simulated bradycardia", Toast.LENGTH_SHORT).show(); });

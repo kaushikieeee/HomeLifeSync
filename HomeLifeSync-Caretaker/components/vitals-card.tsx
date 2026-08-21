@@ -88,6 +88,15 @@ export function VitalsCard({ vitals, detected, scenarios, connected, onSimulate 
         </div>
       </div>
 
+      {/* Prominent set-all-normal button — always visible */}
+      <button
+        onClick={() => onSimulate('HRNORMAL')}
+        className="w-full mb-4 h-11 rounded-2xl border border-emerald-300 bg-emerald-500/10 text-[13px] font-semibold text-emerald-700 active:scale-[0.98] transition-all duration-150 cursor-pointer hover:bg-emerald-500/20 flex items-center justify-center gap-2"
+      >
+        <Heart className="w-4 h-4" />
+        Set All Vitals to Normal
+      </button>
+
       {/* Live vitals grid */}
       <div className="mb-5">
         {/* Heart rate hero */}

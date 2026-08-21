@@ -116,21 +116,14 @@ cp "$CAR/elder-helper/$DEBUG_APK" "$OUT/home-sync-elder-debug.apk"
 ok "elder → $OUT/home-sync-elder-debug.apk"
 
 # ── 4. Tablet APK (thin shell over caretaker export) ────────────────────
-log "Preparing tablet web assets (redirect root → /tablet/)"
+log "Preparing tablet web assets (tablet page as root)"
 TAB_WEB="$ROOT/HomeLifeSync-Tablet/tablet-web"
 rm -rf "$TAB_WEB"
-# Copy everything from caretaker out/
 cp -R "$CAR/out" "$TAB_WEB"
-# Replace root index.html with redirect to /tablet/
-cat > "$TAB_WEB/index.html" <<'REDIRECT'
-<!DOCTYPE html>
-<html>
-<head><meta http-equiv="refresh" content="0;url=/tablet/"></head>
-<body><script>window.location.replace('/tablet/');</script></body>
-</html>
-REDIRECT
+# Make the tablet page the root index.html so Capacitor loads it directly
+cp "$TAB_WEB/tablet/index.html" "$TAB_WEB/index.html"
 
-log "Syncing tablet web assets into android/ (webDir = ../tablet-web)"
+log "Syncing tablet web assets into android/ (webDir = ./tablet-web)"
 (cd "$TAB" && node node_modules/@capacitor/cli/bin/capacitor sync android)
 
 log "Building tablet APK"
